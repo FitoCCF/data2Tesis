@@ -1,0 +1,33 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# --- Entorno Virtual ---
+.pixi/
+
+# --- Datos (Crucial para no saturar GitHub ni filtrar info industrial) ---
+data/raw/*
+data/processed/*
+data/final/*
+# Permitimos subir los directorios vacíos usando .gitkeep
+!data/**/.gitkeep
+
+# --- Modelos Serializados ---
+models/*.pkl
+models/*.joblib
+models/*.h5
+
+# --- Jupyter Notebooks y Python ---
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+
+# --- Sistema Operativo y Editores ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~

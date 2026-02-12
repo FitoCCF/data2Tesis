@@ -1,0 +1,27 @@
+data2Tesis/
+├── .pixi/                # Gestionado por Pixi (entorno virtual)
+├── pixi.toml             # Definición de dependencias y tareas
+├── data/                 # Datos inmutables y procesados
+│   ├── raw/              # Datos crudos extraídos de Postgres
+│   ├── processed/        # Datos tras limpieza y escalado
+│   └── final/            # Resultados finales para gráficas de tesis
+├── docs/                 # Documentación de la tesis (LaTeX, Markdown)
+├── notebooks/            # Jupyter Notebooks para EDA (01_eda, 02_cluster)
+├── models/               # Archivos .pkl serializados del pipeline final
+├── references/           # Papers, diccionarios de tags de los Couriers
+├── reports/              # Gráficas generadas (PDF, PNG) para el documento
+└── src/                  # Código fuente (Módulos de Python)
+    ├── __init__.py       # Hace de src un módulo
+    ├── database.py       # Conexión al contenedor Docker de Postgres
+    ├── features.py       # Ingeniería de características (n -> features)
+    ├── models/           # Scripts de entrenamiento y predicción
+    │   ├── train_pipeline.py
+    │   └── predict_model.py
+    └── visualization.py  # Scripts para generar gráficas comparativas
+
+#Referencias para la creacion de la estructura de las carpetas
+Cookiecutter Data Science: Es la referencia número uno en la comunidad de Ciencia de Datos para proyectos reproducibles. Su principio es que "los resultados de la investigación deben ser audaces y repetibles".
+The Twelve-Factor App: Un estándar para construir aplicaciones SaaS escalables, especialmente relevante ya que tu base de datos y sistema estarán en Docker/VPS. Enfatiza la separación estricta de la configuración del código.
+PEP 8 & Scikit-Learn Estimator API: Para la estructura interna del código en /src, siguiendo las convenciones de Python y la estructura de clases de Scikit-Learn para que tu pipeline sea compatible con cualquier herramienta estándar.
+
+La estructura sigue el estándar Data Science Lifecycle Process (DSLP) y la implementación de Cookiecutter Data Science. Esto justifica ante el jurado que tu software es mantenible y profesional.
