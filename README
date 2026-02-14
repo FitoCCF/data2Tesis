@@ -25,3 +25,4 @@ The Twelve-Factor App: Un estándar para construir aplicaciones SaaS escalables,
 PEP 8 & Scikit-Learn Estimator API: Para la estructura interna del código en /src, siguiendo las convenciones de Python y la estructura de clases de Scikit-Learn para que tu pipeline sea compatible con cualquier herramienta estándar.
 
 La estructura sigue el estándar Data Science Lifecycle Process (DSLP) y la implementación de Cookiecutter Data Science. Esto justifica ante el jurado que tu software es mantenible y profesional.
+
