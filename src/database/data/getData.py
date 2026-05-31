@@ -22,7 +22,17 @@ class Extractor(DBManager):
             SELECT date, time, instance, n1fe, n2cu, n3zn, n4mo, n5ech5, n6sc, n7ech7 
             FROM {self.table_name} 
             WHERE sample_id = :s_id
+            ORDER BY date ASC, time ASC
         """
         return self.execute_query(query, params={"s_id": sample_id})
-    
+
+    def get_assays(self, sample_id: int):
+        # Query optimizada para el sensor PSI
+        query = f"""
+            SELECT date, time, n1fe, n2cu, n3zn, n4mo, n5ech5, n6sc, n7ech7, "pFe", "pCu", "pZn", "pMo", "pIns", "pSol"
+            FROM {self.table_name} 
+            WHERE sample_id = :s_id
+            ORDER BY date ASC, time ASC
+        """
+        return self.execute_query(query, params={"s_id": sample_id})    
 
