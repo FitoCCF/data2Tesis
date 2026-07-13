@@ -6,11 +6,14 @@
 .pixi/
 
 # --- Datos (Crucial para no saturar GitHub ni filtrar info industrial) ---
-#data/raw/*
-#data/processed/*
-#data/final/*
+data/raw/*
+data/processed/*
+data/final/*
 # Permitimos subir los directorios vacíos usando .gitkeep
 !data/**/.gitkeep
+
+# Reportes
+reports/
 
 # --- Modelos Serializados ---
 models/*.pkl
