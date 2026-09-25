@@ -178,12 +178,22 @@ def _main():
     df = pd.read_csv(args.input)
     est = EstimadorCluster(usar=args.modelo_cluster) if args.hasta_etapa == "clustering" else EstimadorHibrido()
 
+    cols_extra = [c for c in ("date", "time", "instance") if c in df.columns]  # se conservan si existen
+
     filas = []
     for _, fila in df.iterrows():
         ints = {c: fila[c] for c in CANALES}
         res = est.predecir(ints)
-        filas.append({**ints, **{k: v for k, v in res.items() if k != "ruteo"},
-                      **(res.get("ruteo") or {})})
+        salida_fila = {c: fila[c] for c in cols_extra}          # date/time/instance primero, si existen
+        salida_fila.update(ints)
+        salida_fila["cluster"] = res.get("cluster")
+        salida_fila["alertas"] = "; ".join(res.get("alertas") or [])
+        salida_fila["confiable"] = res.get("confiable")
+        if res.get("leyes"):                                    # aplana pFe/pCu/pMo/pZn como columnas numéricas
+            salida_fila.update(res["leyes"])
+        if res.get("ruteo"):                                     # ruteo aparte, sin pisar las leyes (mismo nombre)
+            salida_fila.update({f"ruteo_{k}": v for k, v in res["ruteo"].items()})
+        filas.append(salida_fila)
 
     salida = pd.DataFrame(filas)
     out_path = args.output or str(args.input).rsplit(".", 1)[0] + "_scored.csv"

@@ -43,8 +43,15 @@ class Extractor(DBManager):
         return _filtrar_por_fecha(df, desde, hasta)
 
     def get_assays(self, sample_id: int, desde: str | None = None, hasta: str | None = None):
+        """Trae solo los ensayos (leyes de laboratorio) + 'instance' como llave de fusión.
+
+        NO vuelve a traer las intensidades crudas (n1fe..n7ech7): esas ya están
+        en el CSV clusterizado (etapa 4), que sale de la MISMA tabla vía
+        get_intensity(). Traerlas también aquí duplicaba columnas al fusionar
+        (pandas las renombraba n6sc_x/n6sc_y) -- ver construir_dataset_supervisado().
+        """
         query = f"""
-            SELECT date, time, n1fe, n2cu, n3zn, n4mo, n5ech5, n6sc, n7ech7, "pFe", "pCu", "pZn", "pMo", "pIns", "pSol"
+            SELECT date, time, instance, "pFe", "pCu", "pZn", "pMo", "pIns", "pSol"
             FROM {self.table_name}
             WHERE sample_id = :s_id
             ORDER BY date ASC, time ASC

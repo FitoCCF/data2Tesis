@@ -31,35 +31,52 @@ def construir_dataset_supervisado(df_assays: pd.DataFrame,
                                   df_clusterizado: pd.DataFrame):
     """Une ensayos de laboratorio con intensidades clusterizadas.
 
+    Fusiona por 'instance' cuando está disponible en ambos lados (id de fila,
+    no depende de cómo vengan formateadas date/time -- es lo que ya trae
+    get_assays() de la BD). Si df_assays no tiene 'instance' (p.ej. un CSV de
+    ensayos exportado a mano sin esa columna), cae a (date, time) normalizados.
+
     Parámetros
     ----------
-    df_assays : DataFrame con date, time y las leyes (pFe, pCu, pZn, pMo, ...).
+    df_assays : DataFrame con date, time, (idealmente) instance y las leyes
+        (pFe, pCu, pZn, pMo, ...).
     df_clusterizado : salida de la etapa 4 (intensidades crudas + _ortho + cluster).
 
     Retorna
     -------
-    df_completo : merge completo por (date, time).
+    df_completo : merge completo.
     df_filtrado : solo filas con al menos una ley de laboratorio no nula.
     """
     df_cluster = df_clusterizado.dropna(subset=["instance"]).copy()  # descarta filas sin instancia
-
-    # Normaliza date/time en ambos lados para que el merge coincida
     df_assays = df_assays.copy()                          # no mutar el original
-    df_assays["date"] = df_assays["date"].astype(str).str.strip()   # date a string limpio
-    df_assays["time"] = df_assays["time"].apply(_limpiar_hora)      # time normalizado
 
-    # Incluye intensidades CRUDAS + n6sc, no solo las _ortho (necesarias para la etapa 5)
-    cols = ["date", "time", "instance",
-            "n1fe", "n2cu", "n3zn", "n4mo", "n6sc",       # crudas (necesarias para la etapa 5)
-            "n1fe_ortho", "n2cu_ortho", "n3zn_ortho", "n4mo_ortho",  # ortogonalizadas
-            "cluster_kmeans", "cluster_gmm"]              # etiquetas de cluster
-    cols = [c for c in cols if c in df_cluster.columns]   # solo las que existan
+    por_instance = "instance" in df_assays.columns        # llave robusta si está disponible
+    if por_instance:
+        df_assays = df_assays.dropna(subset=["instance"])
+        df_assays["instance"] = df_assays["instance"].astype("int64")
+        df_cluster["instance"] = df_cluster["instance"].astype("int64")
+        llave = ["instance"]
+    else:                                                  # --- fallback: (date, time) normalizados ---
+        df_assays["date"] = df_assays["date"].astype(str).str.strip()
+        df_assays["time"] = df_assays["time"].apply(_limpiar_hora)
+        df_cluster["date"] = df_cluster["date"].astype(str).str.strip()
+        df_cluster["time"] = df_cluster["time"].apply(_limpiar_hora)
+        llave = ["date", "time"]
+
+    # Incluye intensidades CRUDAS + n6sc, no solo las _ortho (necesarias para la etapa 5).
+    # OJO: df_assays (works4cdp_assay) puede traer n1fe..n6sc junto con las leyes -> si
+    # también las tomamos de df_cluster, pandas las duplica como n6sc_x/n6sc_y (la columna
+    # 'n6sc' deja de existir). Por eso solo se toman de df_cluster las que NO estén ya en df_assays.
+    crudas = ["n1fe", "n2cu", "n3zn", "n4mo", "n6sc"]
+    crudas_de_cluster = [c for c in crudas if c not in df_assays.columns]
+    cols = llave + crudas_de_cluster + [
+        "n1fe_ortho", "n2cu_ortho", "n3zn_ortho", "n4mo_ortho",  # ortogonalizadas (solo existen aquí)
+        "cluster_kmeans", "cluster_gmm",                        # etiquetas de cluster
+    ]
+    cols = [c for c in dict.fromkeys(cols) if c in df_cluster.columns]  # solo las que existan, sin duplicar
     df_cluster = df_cluster[cols].copy()                  # subconjunto de columnas
-    df_cluster["date"] = df_cluster["date"].astype(str).str.strip()  # date limpio
-    df_cluster["time"] = df_cluster["time"].apply(_limpiar_hora)     # time normalizado
 
-    df_completo = pd.merge(df_assays, df_cluster,         # fusiona por date+time
-                           on=["date", "time"], how="inner")
+    df_completo = pd.merge(df_assays, df_cluster, on=llave, how="inner")  # fusiona por la llave elegida
 
     filtro = ["pFe", "pCu", "pZn", "pMo", "pIns", "pSol"] # columnas de ley/laboratorio
     filtro = [c for c in filtro if c in df_completo.columns]  # solo las que existan
