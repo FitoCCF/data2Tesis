@@ -21,11 +21,14 @@
 from collections import deque                             # buffer para sensor congelado
 import warnings                                            # silenciar warning cosmético
 import numpy as np                                         # cálculo numérico
+import pandas as pd                                        # DataFrames (features de cierre del detector)
 import joblib                                               # cargar artefactos .joblib
 
 from .config import (CANALES, METALES, FEATS_CLUSTER, MODELS_DIR,  # constantes y rutas
                      ART_ANOMALIAS, ART_ORTHO, ART_POWER, ART_SCALER,
-                     ART_KMEANS, ART_GMM, ART_REGRESION)
+                     ART_KMEANS, ART_GMM, ART_REGRESION,
+                     ART_CALIB_COMPOSITO, ART_CORRECTOR_SESGO)
+from .features import features_cierre                     # fracciones de cierre (detector robusto, cambio 4)
 
 # Silencia solo el aviso de sklearn sobre nombres de columna (no afecta resultados)
 warnings.filterwarnings("ignore", message="X does not have valid feature names")
@@ -56,7 +59,20 @@ class _CompuertaYCluster:
         return sum(1 for v in self.buffer if v == tuple(x)) >= self.umbral_congelado  # repetida?
 
     def _es_anomalia(self, x):
-        return self.detector.predict(x.reshape(1, -1))[0] == -1  # IsolationForest
+        """CAMBIO 4: aplica el detector en el MISMO espacio en que se entrenó.
+
+        Si el artefacto se entrenó sobre fracciones de cierre (marca _robusto),
+        hay que transformar la lectura antes de evaluarla; si se entrenó sobre
+        intensidades absolutas (artefacto histórico), se evalúa tal cual.
+        Aplicar un detector de cierre a intensidades absolutas marcaría TODO
+        como anomalía, así que el modo no puede quedar implícito.
+        """
+        if getattr(self.detector, "_robusto", False):     # detector entrenado sobre fracciones de cierre
+            fila = pd.DataFrame([dict(zip(CANALES, x))])  # arma un DataFrame de una fila
+            v = features_cierre(fila).values               # lo pasa a fracciones m/Σm
+        else:                                             # detector histórico (intensidades absolutas)
+            v = x.reshape(1, -1)                          # se evalúa el vector crudo
+        return self.detector.predict(v)[0] == -1          # -1 = anomalía
 
     def _ortogonalizar(self, ints):
         n6sc = np.array([[ints["n6sc"]]])                       # referencia de dilución
@@ -108,7 +124,8 @@ class EstimadorHibrido(_CompuertaYCluster):
     """Pipeline completo (etapas 1-6): carga los modelos congelados y estima
     leyes ruteando local/global por cluster."""
 
-    def __init__(self, models_dir=MODELS_DIR, buffer_size=10, umbral_congelado=3):
+    def __init__(self, models_dir=MODELS_DIR, buffer_size=10, umbral_congelado=3,
+                 usar_recalibracion=True):
         self._cargar_etapas_1_4(models_dir, buffer_size, umbral_congelado)
 
         bundle = joblib.load(models_dir / ART_REGRESION)          # bundle de regresión (etapa 5)
@@ -122,8 +139,29 @@ class EstimadorHibrido(_CompuertaYCluster):
         # Elige el modelo de clustering según lo que usó la etapa 5
         self.modelo_cluster = self.gmm if "gmm" in cluster_col else self.kmeans
 
-    def predecir(self, ints: dict) -> dict:
-        """ints: dict con n1fe, n2cu, n3zn, n4mo, n6sc (intensidades crudas)."""
+        # --- CAMBIOS 1-3: calibración contra compósito + corrector de sesgo ---
+        # Solo para las leyes que el backtest demostró que mejoran (hoy: pFe).
+        # Las demás (pCu, pMo, pZn) siguen con el modelo de la etapa 5, porque
+        # medido empeoran con la recalibración o ya están en su techo.
+        self.calib_composito = None                               # bundle recalibrado (None = no disponible)
+        self.corrector = None                                     # corrector de sesgo en línea
+        if usar_recalibracion:                                    # se puede desactivar para reproducir el pipeline viejo
+            ruta_calib = models_dir / ART_CALIB_COMPOSITO         # artefacto de los cambios 1-2
+            if ruta_calib.exists():                               # solo si ya se entrenó
+                self.calib_composito = joblib.load(ruta_calib)    # carga el bundle recalibrado
+            ruta_sesgo = models_dir / ART_CORRECTOR_SESGO         # artefacto del cambio 3
+            if ruta_sesgo.exists():                               # solo si ya hay historia de sesgo
+                self.corrector = joblib.load(ruta_sesgo)          # carga el corrector
+
+    def predecir(self, ints: dict, turno: str = "dia") -> dict:
+        """Estima las leyes de una lectura.
+
+        Parámetros
+        ----------
+        ints : dict con n1fe, n2cu, n3zn, n4mo, n6sc (intensidades crudas).
+        turno : 'dia' o 'noche'. Solo se usa para elegir el sesgo del CAMBIO 3
+            (medido: el sesgo de Fe difiere 0.211 entre turnos).
+        """
         x = np.array([ints[c] for c in CANALES], dtype=float)   # vector crudo ordenado
         r = {"leyes": None, "cluster": None, "ruteo": {}, "alertas": [], "confiable": True}  # salida
 
@@ -144,14 +182,28 @@ class EstimadorHibrido(_CompuertaYCluster):
         cluster = self._asignar_cluster(ortho, self.modelo_cluster)  # 5) asignación de cluster
         r["cluster"] = cluster
 
-        vector = np.array([[ortho[f] for f in self.features_reg]])  # features de regresión
+        vector = np.array([[ortho[f] for f in self.features_reg]])  # features de regresión (etapa 5)
+        fila = pd.DataFrame([{c: ints[c] for c in CANALES}])     # fila cruda (features del modelo recalibrado)
+
+        # Leyes que van al modelo recalibrado contra compósito (hoy: solo pFe)
+        leyes_recal = set(self.calib_composito["modelos"]) if self.calib_composito else set()
+
         leyes = {}                                              # leyes estimadas
         for ley in self.targets:                                # por cada ley
-            decision = self.tabla_ruteo[(ley, cluster)]         # 'local' o 'global'
-            r["ruteo"][ley] = decision                          # registra el ruteo
-            modelo = (self.modelos_locales[(ley, cluster)]      # elige el modelo
-                      if decision == "local" else self.modelos_globales[ley])
-            leyes[ley] = float(np.ravel(modelo.predict(vector))[0])  # predicción
+            if ley in leyes_recal:                              # --- ruta RECALIBRADA (cambios 1-3) ---
+                from .calibracion_composito import predecir as _pred_recal  # import local: evita ciclo
+                valor = float(_pred_recal(self.calib_composito, fila)[ley].iloc[0])  # predicción cruda
+                if self.corrector is not None:                  # si hay historia de sesgo
+                    valor = self.corrector.corregir(ley, valor, turno)  # aplica el offset (cambio 3)
+                r["ruteo"][ley] = "composito"                   # deja constancia de la ruta usada
+            else:                                               # --- ruta ORIGINAL (etapa 5, local/global) ---
+                decision = self.tabla_ruteo[(ley, cluster)]     # 'local' o 'global'
+                r["ruteo"][ley] = decision                      # registra el ruteo
+                modelo = (self.modelos_locales[(ley, cluster)]  # elige el modelo
+                          if decision == "local" else self.modelos_globales[ley])
+                valor = float(np.ravel(modelo.predict(vector))[0])  # predicción
+            leyes[ley] = valor                                  # guarda la ley estimada
+
         r["leyes"] = leyes                                      # guarda las leyes
         return r
 
@@ -180,10 +232,24 @@ def _main():
 
     cols_extra = [c for c in ("date", "time", "instance") if c in df.columns]  # se conservan si existen
 
+    # El turno hace falta para la corrección de sesgo del CAMBIO 3 (el sesgo de
+    # Fe difiere 0.211 entre día y noche). Se deduce de la hora si el CSV la trae;
+    # si no, cae a 'dia' y el corrector usa el sesgo global como respaldo.
+    if "time" in df.columns:                                # el CSV trae hora de la lectura
+        # Se extrae la hora con regex en vez de pd.to_datetime: las horas vienen
+        # como 'HH:MM:SS' y el parseo completo es lento y emite un warning de
+        # formato ambiguo sobre decenas de miles de filas.
+        horas = (df["time"].astype(str).str.extract(r"^\s*(\d{1,2})")[0]  # primer grupo de 1-2 dígitos
+                 .astype("Float64"))                        # nullable: deja NaN si no matcheó
+        turnos = horas.map(lambda h: "noche" if pd.notna(h) and h >= 12 else "dia")  # turno A = mañana
+    else:                                                   # CSV sin hora
+        turnos = pd.Series(["dia"] * len(df), index=df.index)  # respaldo: sesgo global
+
     filas = []
     for _, fila in df.iterrows():
         ints = {c: fila[c] for c in CANALES}
-        res = est.predecir(ints)
+        res = est.predecir(ints, turno=turnos.loc[fila.name]) \
+            if isinstance(est, EstimadorHibrido) else est.predecir(ints)  # EstimadorCluster no usa turno
         salida_fila = {c: fila[c] for c in cols_extra}          # date/time/instance primero, si existen
         salida_fila.update(ints)
         salida_fila["cluster"] = res.get("cluster")

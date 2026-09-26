@@ -1,0 +1,116 @@
+{
+  "generado_utc": "2026-09-25T22:43:48.712661+00:00",
+  "script": "notebooks/10_recalibracion_composito.py",
+  "entradas": {
+    "intensidades": {
+      "ruta": "/home/daigo/data2TesisV2/data/processed/intensidades_cobre.csv",
+      "sha256": "678471efaef92dd3b9803356c27b3a507d6ec48794fa85a351aa920d6a8d9ef0",
+      "filas_validas": 36173
+    },
+    "composito": {
+      "ruta": "/home/daigo/data2TesisV2/data/raw/assay_lab_courier_pi.csv",
+      "sha256": "8bbb631e550774c45b8c85a90820c96fd875efff5b5a2152f28fba1bb3c433ec",
+      "ensayos": 2590
+    }
+  },
+  "parametros": {
+    "random_state": 42,
+    "dias_ventana_movil": 270,
+    "paso_reentreno_dias": 15,
+    "frac_test": 0.3,
+    "ventana_composito_h": 12,
+    "bloque_resample": "30min",
+    "min_bloques_ventana": 8,
+    "n_muestras_sesgo": 20,
+    "sesgo_por_turno": true,
+    "leyes_recalibrar": [
+      "pFe"
+    ],
+    "feats_regresion": [
+      "n1fe_f",
+      "n2cu_f",
+      "n3zn_f",
+      "n4mo_f",
+      "logSumI"
+    ],
+    "contaminacion_anomalia": 0.02
+  },
+  "dataset": {
+    "ventanas_alineadas": 760,
+    "ts_min": "2025-07-13 19:30:00",
+    "ts_max": "2026-08-30 19:30:00",
+    "n_backtest": 228,
+    "n_entrenamiento_final": 500
+  },
+  "metricas_backtest": [
+    {
+      "ley": "pFe",
+      "variante": "cruda",
+      "n": 228,
+      "R2": 0.1599,
+      "MAE": 0.9279,
+      "corr": 0.4538,
+      "pendiente": 0.2144,
+      "sesgo": -0.2808
+    },
+    {
+      "ley": "pFe",
+      "variante": "corregida",
+      "n": 228,
+      "R2": 0.2443,
+      "MAE": 0.9138,
+      "corr": 0.5079,
+      "pendiente": 0.317,
+      "sesgo": 0.012
+    }
+  ],
+  "comparacion_vs_linea_base": {
+    "pFe": {
+      "antes": 0.278,
+      "ahora": 0.5079,
+      "fabrica": 0.47,
+      "techo": 0.743,
+      "veredicto": "MEJORA y supera a fábrica"
+    }
+  },
+  "sesgo_vigente": {
+    "pFe": {
+      "dia": -0.0695,
+      "noche": -0.421
+    }
+  },
+  "detector_anomalias": {
+    "corte_entrenamiento": "2026-04-27 16:48:00",
+    "rechazo_por_trimestre": {
+      "absolutas_%": {
+        "2025Q2": 0.0,
+        "2025Q3": 11.0,
+        "2025Q4": 1.1,
+        "2026Q1": 0.8,
+        "2026Q2": 18.4,
+        "2026Q3": 31.1
+      },
+      "cierre_%": {
+        "2025Q2": 0.0,
+        "2025Q3": 6.3,
+        "2025Q4": 1.6,
+        "2026Q1": 1.6,
+        "2026Q2": 5.7,
+        "2026Q3": 6.9
+      }
+    }
+  },
+  "entorno": {
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "scikit_learn": "1.9.1"
+  },
+  "artefactos": {
+    "calibracion_composito": "/home/daigo/data2TesisV2/models/calibracion_composito.joblib",
+    "corrector_sesgo": "/home/daigo/data2TesisV2/models/corrector_sesgo.joblib",
+    "detector_anomalias": "/home/daigo/data2TesisV2/models/anomaly_detector.joblib",
+    "dataset_alineado": "/home/daigo/data2TesisV2/data/processed/composito_12h_alineado.csv",
+    "backtest": "/home/daigo/data2TesisV2/data/processed/backtest_recalibracion.csv"
+  }
+}
