@@ -286,6 +286,56 @@ Además el modelo auxiliar extrapola mal: produjo `pSol_est` de hasta −13.4%.
 Calidad del dato: `pSol` tiene un valor de 295%, un 0, y 4 bajo 5%. Limpiando a
 `5 < pSol <= 100` quedan 309 de 314.
 
+### 2.11 Los insolubles SÍ están en el PI (hallazgo del 2026-09-26)
+
+Al extraer los tags del compósito directamente del PI se verificó el descriptor
+real de cada uno, que hasta entonces se había **deducido, no confirmado**:
+
+```
+7100AIP101MAN = %Fe Promedio Concentrado colectivo  Courier Cobre
+7100AIP102MAN = %Cu Promedio Concentrado colectivo  Courier Cobre
+7100AIP103MAN = %Ins Concentrado colectivo  Courier Cobre      <-- INSOLUBLES
+7100AIP104MAN = %Moly Promedio Concentrado colectivo  Courier Cobre
+```
+
+Dos consecuencias:
+
+**1. El mapeo documental de `config.py` estaba mal** — tenía Fe y Cu invertidos y
+suponía un tag de Zn inexistente. Error solo documental: ninguna etapa lo usaba.
+Se verificó que las columnas de `assay_lab_courier_pi.csv` están bien nombradas,
+idénticas al PI hasta 1e-6. **Todos los resultados anteriores se mantienen.**
+
+**2. Los insolubles están disponibles para los 2594 compósitos**, no solo para
+las 314 muestras puntuales. Media 9.40%, sd 2.75, rango 2.02–23.68, desde
+2022-12-30, misma cadencia de 12 h.
+
+Esto cambia el estado del hilo 5.4. En la sección 2.6 se concluyó que el ruteo
+por insolubles daba +0.144 en pFe y +0.080 en pCu pero **no era desplegable**,
+porque el insoluble solo existía en las 314 puntuales y no se puede predecir
+desde el espectro (R² = 0.088). Eso era cierto para la fuente que se conocía
+entonces. Con el tag del PI:
+
+- Es **dato de laboratorio**, no de proceso -> permitido en la tesis.
+- Llega en la **misma cadencia de 12 h** que la corrección de sesgo y el
+  reentreno, así que encaja en el ciclo operativo ya implementado.
+- En inferencia no se conoce el insoluble del turno en curso, pero sí el del
+  turno anterior. Los regímenes duran días, así que el último valor conocido es
+  un indicador razonable del régimen actual — y es exactamente la información
+  que tiene el operador cuando decide generar una ecuación nueva.
+
+Correlaciones del insoluble con las leyes del compósito (n=2590):
+`corr(Ins, Cu) = -0.565`, `corr(Ins, Fe) = -0.476`. Consistente con la dilución
+por ganga bajando la ley.
+
+**PENDIENTE DE MEDIR**: si rutear por el insoluble del turno anterior reproduce
+el +0.144 en el backtest walk-forward contra el compósito. Las ganancias de la
+sección 2.6 están medidas en CV sobre las 314 puntuales, que ya se comprobó que
+es optimista.
+
+Datos en `data/raw/LABCOMPOSITO.csv`, extraídos con
+`scripts/extraer_labcomposito.py`.
+
+
 ---
 
 ## 3. Correcciones al razonamiento durante la sesión
@@ -351,7 +401,14 @@ de 15 min, así que la repetición es por diseño del tag, no falla del sensor.
 `SumI` sí correlaciona con el sólido (0.659) y `n6sc` no (−0.065). La ruta A (Cu,
 Mo) sí usa ortogonalización. **No probado.**
 
-### 5.4 Ruteo por variables de planta (solo producción)
+### 5.4 Ruteo por régimen de mineral — REABIERTO con los insolubles del PI
+
+**Prioridad alta.** Ver sección 2.11: el insoluble está en el tag 7100AIP103MAN
+para los 2594 compósitos, es dato de laboratorio (permitido en tesis) y llega
+cada 12 h. Medir si rutear por el insoluble del turno anterior reproduce el
++0.144 de pFe en el backtest contra el compósito.
+
+### 5.4b Ruteo por variables de planta (solo producción)
 Restricción del proyecto: **los datos de proceso son sensibles y no se pueden
 usar en la tesis**; las intensidades sí se pueden anonimizar. Para producción sí
 está permitido.

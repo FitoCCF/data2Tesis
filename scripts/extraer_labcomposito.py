@@ -23,6 +23,7 @@
 import argparse                                           # argumentos de linea de comandos
 import os                                                 # entorno y rutas
 import sys                                                # path de modulos
+from datetime import date                                 # fecha de fin por defecto
 from pathlib import Path                                  # rutas multiplataforma
 
 # La pasarela vive en otro proyecto; se agrega su ruta sin copiarla aqui
@@ -54,12 +55,19 @@ def cargar_token() -> str:
 def main():
     ap = argparse.ArgumentParser(description="Extrae el compósito de laboratorio del PI")
     ap.add_argument("--desde", default="2022-01-01", help="inicio, 'YYYY-MM-DD' o sintaxis PI ('*-3y')")
-    ap.add_argument("--hasta", default="*", help="fin, 'YYYY-MM-DD' o '*' para ahora")
+    # OJO: el troceado del cliente hace pd.Timestamp(fin), que no entiende la
+    # sintaxis relativa del PI ('*', '*-3y'). El fin debe ser una fecha concreta.
+    ap.add_argument("--hasta", default=date.today().isoformat(),
+                    help="fin, 'YYYY-MM-DD' (hoy por defecto; no acepta '*')")
     ap.add_argument("--salida", default=str(DESTINO), help="ruta del CSV de salida")
     ap.add_argument("--solo-verificar", action="store_true",
                     help="comprueba conexión y metadata de los tags, sin extraer")
     ap.add_argument("--chunk-dias", type=float, default=90,
                     help="tamaño del troceado temporal (evita timeouts del servidor)")
+    ap.add_argument("--host", default=os.environ.get("PI_GATEWAY_HOST", "127.0.0.1"),
+                    help="host de la pasarela PiGateway")
+    ap.add_argument("--puerto", type=int, default=int(os.environ.get("PI_GATEWAY_PORT", 5173)),
+                    help="puerto de la pasarela (5173 en esta instalación, no el 5000 por defecto)")
     args = ap.parse_args()
 
     token = cargar_token()                                # token, si lo hay
@@ -67,7 +75,8 @@ def main():
         print("AVISO: no se encontró PI_TOKEN (ni variable de entorno ni ~/.pi_token).")
         print("       Si la pasarela exige token, la petición será rechazada con HTTP 401.\n")
 
-    cli = obtener_cliente(token=token) if token else obtener_cliente()  # cliente de la pasarela
+    cli = obtener_cliente(host=args.host, puerto=args.puerto,  # host/puerto explícitos
+                          token=token)                         # token desde entorno o ~/.pi_token
 
     # --- 1. Salud de la pasarela ---
     try:

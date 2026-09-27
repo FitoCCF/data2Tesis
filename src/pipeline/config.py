@@ -56,10 +56,18 @@ ART_REGRESION = "modelos_locales_por_cluster.joblib"     # etapa 5 (modelos loca
 
 # --- Fuente de laboratorio: compósito de 12 h (tags MAN del courier) ---
 LAB_COMPOSITO = DATA_RAW / "assay_lab_courier_pi.csv"    # compósito 12 h (turno día 07:30 / noche 19:30)
-TAGS_COMPOSITO = {"7100AIP101MAN": "cu",                 # tags PI de origen, para trazabilidad documental
-                  "7100AIP102MAN": "fe",                 # (el CSV ya viene con las columnas renombradas)
-                  "7100AIP103MAN": "mo",
-                  "7100AIP104MAN": "zn"}
+# Mapeo VERIFICADO contra el descriptor real del PI (2026-09-26), no deducido.
+# La version anterior de este diccionario tenia Fe y Cu invertidos y suponia un
+# tag de Zn que no existe. El error era solo documental -- ninguna etapa lo
+# usaba -- y se confirmo que las columnas de assay_lab_courier_pi.csv estan
+# bien nombradas (identicas al PI hasta 1e-6).
+TAGS_COMPOSITO = {"7100AIP101MAN": "fe",                 # %Fe Promedio Concentrado colectivo Courier Cobre
+                  "7100AIP102MAN": "cu",                 # %Cu Promedio Concentrado colectivo Courier Cobre
+                  "7100AIP103MAN": "ins",                # %Ins Concentrado colectivo Courier Cobre
+                  "7100AIP104MAN": "mo"}                 # %Moly Promedio Concentrado colectivo Courier Cobre
+# NOTA: el composito NO trae Zn. Y SI trae INSOLUBLES, que es la variable que
+# en el diagnostico dio +0.144 en pFe al usarse para rutear modelos locales.
+# Ver docs/bitacora_analisis.md seccion 2.6 y el hilo abierto 5.4.
 COL_TS_COMPOSITO = "Unnamed: 0"                          # columna de timestamp tal como la exporta PI
 TZ_COMPOSITO = "America/Lima"                            # PI exporta en UTC-05:00 -> se normaliza a hora local
 
