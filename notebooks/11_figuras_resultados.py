@@ -77,14 +77,21 @@ ELEMENTOS = [("pFe", "fe", "Fe"), ("pCu", "cu", "Cu"), ("pMo", "mo", "Mo")]  # (
 # 1. Construcción del dataset de evaluación unificado
 # ============================================================
 
-def construir_evaluacion(ruta_intensidades: str) -> pd.DataFrame:
+def construir_evaluacion(ruta_intensidades: str, bt: pd.DataFrame = None) -> pd.DataFrame:
     """Arma la tabla de evaluación con los tres elementos sobre las mismas ventanas.
 
     pFe sale del backtest (modelo recalibrado); pCu y pMo se scorean con el
     modelo original por lectura y se promedian en la misma ventana de 12 h.
+
+    `bt` es opcional: por defecto lee backtest_recalibracion.csv (el backtest
+    oficial con CorrectorSesgo). Se puede pasar directo el DataFrame que
+    devuelve calibracion_composito.backtest(..., corrector=OTRO) -- mismas
+    columnas (ts, turno, pFe_corr, pFe_real) -- para evaluar una variante
+    (p.ej. CorrectorKalman) con el mismo resto del pipeline, sin escribir CSV.
     """
     # --- pFe: backtest walk-forward de la celda 10 (fuera de muestra) ---
-    bt = pd.read_csv(CFG.DATA_PROCESSED / "backtest_recalibracion.csv", parse_dates=["ts"])
+    if bt is None:
+        bt = pd.read_csv(CFG.DATA_PROCESSED / "backtest_recalibracion.csv", parse_dates=["ts"])
 
     # --- pCu y pMo: modelo original (etapa 5), aplicado por lectura ---
     bundle = joblib.load(CFG.MODELS_DIR / CFG.ART_REGRESION)       # modelos locales/globales

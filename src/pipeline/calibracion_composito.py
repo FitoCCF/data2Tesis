@@ -172,11 +172,16 @@ class CorrectorSesgo:
             almacen[clave] = deque(maxlen=self.n_muestras)  # buffer circular de tamaño fijo
         return almacen[clave]                             # deque listo para usar
 
-    def actualizar(self, ley: str, prediccion: float, real: float, turno: str = "dia"):
+    def actualizar(self, ley: str, prediccion: float, real: float, turno: str = "dia", ts=None):
         """Registra un par (predicción, valor real de laboratorio) ya conocido.
 
         Se llama cuando llega un resultado nuevo del compósito. El residuo se
         guarda con signo 'predicho - real': positivo = el modelo sobreestima.
+
+        `ts` se acepta y se ignora -- existe solo para que esta clase tenga la
+        misma firma que CorrectorKalman (src/pipeline/corrector_kalman.py),
+        que sí lo necesita para escalar el ruido de proceso por tiempo
+        transcurrido. Permite intercambiar ambos correctores en backtest().
         """
         residuo = float(prediccion) - float(real)         # residuo con signo
         self._buffer(self.residuos, (ley, turno)).append(residuo)   # buffer del turno
@@ -286,7 +291,7 @@ def predecir(bundle: dict, df_intensidades: pd.DataFrame) -> pd.DataFrame:
 
 def backtest(D: pd.DataFrame, frac_test=0.30, dias_ventana=DIAS_VENTANA_MOVIL,
              paso_reentreno_dias=PASO_REENTRENO_DIAS, usar_sesgo=True,
-             leyes=LEYES_RECALIBRAR, devolver_corrector=False):
+             leyes=LEYES_RECALIBRAR, devolver_corrector=False, corrector=None):
     """Simula la operación real: reentrenar cada N días y corregir sesgo en línea.
 
     Protocolo, para cada compósito del período de prueba:
@@ -311,7 +316,12 @@ def backtest(D: pd.DataFrame, frac_test=0.30, dias_ventana=DIAS_VENTANA_MOVIL,
     corte = D["ts"].quantile(1 - frac_test)               # frontera entrenamiento / prueba
     idx_test = D.index[D["ts"] > corte]                   # índices del período de prueba
 
-    corrector = CorrectorSesgo()                          # corrector de sesgo (CAMBIO 3)
+    # corrector de sesgo (CAMBIO 3); se puede inyectar uno distinto (p.ej.
+    # CorrectorKalman) para compararlo en igualdad de condiciones -- por
+    # defecto es exactamente el mismo objeto que antes, comportamiento
+    # idéntico si no se pasa nada.
+    if corrector is None:
+        corrector = CorrectorSesgo()
     bundle = None                                         # bundle vigente (se reentrena periódicamente)
     ultimo_reentreno = None                               # fecha del último reentreno
 
@@ -348,7 +358,7 @@ def backtest(D: pd.DataFrame, frac_test=0.30, dias_ventana=DIAS_VENTANA_MOVIL,
             registro[f"{ley}_real"] = float(fila[col_lab])  # valor real del compósito
 
             # --- 4. Recién ahora se revela el real y se actualiza el corrector ---
-            corrector.actualizar(ley, cruda, fila[col_lab], fila["turno"])  # sin fuga: es posterior al paso 3
+            corrector.actualizar(ley, cruda, fila[col_lab], fila["turno"], ts=t)  # sin fuga: es posterior al paso 3
 
         filas.append(registro)                            # acumula el resultado
 

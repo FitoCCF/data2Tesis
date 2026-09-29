@@ -5,7 +5,7 @@ sesión de diagnóstico. Sirve para retomar el trabajo en otra máquina sin repe
 los experimentos. **Todos los números de este documento están medidos**, no
 estimados; cada uno indica el protocolo con que se obtuvo.
 
-Última actualización: 2026-09-28
+Última actualización: 2026-09-29
 
 ---
 
@@ -682,3 +682,177 @@ Mo        216  0.905  0.162  0.953    0.882
 Consistente con las cifras de todo el período abr-ago. Código:
 `notebooks/20_figura_validacion_desde_mayo.py`, figura en
 `reports/fig_validacion_desde_mayo.png`.
+
+---
+
+## 9. Sesión 2026-09-29 — corrector Kalman, recuperación de filas, y dos hilos más cerrados
+
+### 9.0 Recomendación — la mejor opción para el mejor resultado
+
+De todo lo medido esta sesión (aquí + §8), **una sola cosa vale la pena
+adoptar en producción**: el corrector Kalman de sesgo para **pFe**
+(§9.2) — mejora corr, R² y MAE a la vez, mismo backtest, sin tocar el
+modelo. El resto son negativos ya sea confirmados (insoluble, cabeza,
+orden escalado/ortogonalización) o resultados mixtos que requieren una
+decisión editorial, no una adopción automática (Kalman en Cu, §9.3). El
+filtro de `-9999` recuperable (§9.1) es una corrección de robustez, no
+cambia ningún número hoy. `pSol` de alta frecuencia (§9.5) sigue
+bloqueado por falta de instrumentación/ingesta.
+
+```
+cambio                              estado          accion recomendada
+------------------------------------------------------------------------
+Kalman en pFe (bias, q=0.1)         MEJORA (3/3)    ADOPTAR
+Kalman en pCu (bias, q=0.0001)      MIXTO           decidir por criterio
+                                                      (R2/MAE si o corr no)
+filtro -9999 recuperable            robustez        ya aplicado, sin riesgo
+orden escalado/ortogonalizacion     NO AYUDA         dejar como esta
+insoluble (4 pruebas, sesion previa) NO AYUDA        cerrado (S8)
+cabeza/rebose hidrociclones          INCONCLUSO      pendiente de mas dato
+pSol alta frecuencia                 NO EXISTE        pendiente de ingesta
+```
+
+### 9.1 Filtro de limpieza: filas con error parcial ya no se borran
+
+`_filtrar_invalidos()` (`src/pipeline/limpieza.py`) borraba la fila
+completa si **cualquiera** de los 5 canales traía el código de error
+`-9999`, perdiendo los otros 4 canales válidos por uno malo. Ahora solo
+se borra si **los 5** están en error; si es parcial, el canal puntual
+pasa a `NaN` explícito y la fila se conserva. Se corrigió también
+`limpiar()` para que esas filas recuperadas (no evaluables por el
+IsolationForest, por el `NaN`) no se pierdan igual dos pasos después --
+antes se descartaban en silencio sin dejar rastro. De paso, un bug
+latente en `features_cierre()` (`features.py`): la suma de cierre usaba
+`skipna=True` por defecto, así que un metal en `NaN` no anulaba la
+fracción de los otros 3 (las calculaba con un denominador entendido de
+menos) -- corregido con `min_count=len(METALES)`.
+
+**Con los datos actuales, esto no cambia ningún número**: las 4 filas
+con `-9999` de hoy tienen los 5 canales en error, no parcial. Verificado
+con 4 casos sintéticos (parcial en `n6sc`, parcial en un metal, total,
+y el caso real sin cambios) -- los 4 se comportan como se espera.
+Corrección preventiva/estructural, no retroactiva.
+
+### 9.2 Corrector Kalman de sesgo para pFe -- RECOMENDADO ADOPTAR
+
+`CorrectorSesgo` (el "cambio 3" de la recalibración de Fe) promedia los
+últimos 20 residuos con ventana fija -- viola la regla del proyecto de
+usar EWMA, nunca media móvil simple. Se implementó `CorrectorKalman`
+(`src/pipeline/corrector_kalman.py`): sesgo como caminata aleatoria
+escalar por `(ley, turno)`, con el ruido de proceso escalado por tiempo
+transcurrido (maneja el muestreo irregular, que una ventana de N no
+puede). Misma interfaz que `CorrectorSesgo`, inyectable en
+`calibracion_composito.backtest(corrector=...)` sin tocar esa función
+(comportamiento por defecto sin cambios si no se pasa nada).
+
+Backtest walk-forward, mismos 228 puntos que ya valida el resto del
+pipeline:
+
+```
+                          corr      R2     MAE
+media movil (actual)     0.508   0.244   0.914
+kalman q=0.1 (nuevo)     0.576   0.316   0.863
+diferencia              +0.068  +0.072  -0.051
+```
+
+Barrido de `q_por_dia` (único hiperparámetro libre, r=1 fijo): sube
+monótono hasta saturar en 0.1-0.2 y **cae de nuevo** en q>=0.5 pese a
+que el corr seguía subiendo un poco ahí -- se eligió por R2, no por la
+métrica que más convenía. Las tres métricas mejoran a la vez, a
+diferencia de todo lo demás probado esta sesión. Figuras:
+`reports/fig_tendencia_kalman_vs_lab.png` (Fe solo, media móvil vs
+Kalman vs lab) y `reports/fig_validacion_kalman.png` (los 3 elementos,
+mismo formato que la celda 11, con Fe corregido por Kalman: corr Fe
+0.576, Cu 0.484 y Mo 0.953 sin cambios). Código:
+`notebooks/21_backtest_corrector_kalman.py`,
+`notebooks/22_figura_validacion_kalman.py`.
+
+**No implementado en el bundle de producción todavía** --
+`models/calibracion_composito.joblib`/`corrector_sesgo.joblib` siguen
+con `CorrectorSesgo`. Adoptar significa cambiar
+`notebooks/10_recalibracion_composito.py` para usar `CorrectorKalman`
+en el paso 4 y volver a correr el ciclo completo.
+
+### 9.3 Corrector Kalman de sesgo para pCu -- resultado mixto, no automático
+
+Cu **nunca tuvo** un corrector de sesgo (el "cambio 3" solo se aplicó a
+Fe), pese a que la bitácora ya medía que el sesgo de Cu también
+deambula por trimestre incluso en la calibración de fábrica (§2.3:
+`sesgo_cu` 0.462 -> 1.109 -> 0.055 -> 0.018). Se probó el mismo
+mecanismo, sin tocar el modelo de Cu:
+
+```
+                          corr      R2     MAE
+sin corrector (actual)   0.484   0.086   1.390
+kalman q=0.0001 (nuevo)  0.463   0.207   1.283
+diferencia              -0.021  +0.120  -0.107
+```
+
+`q` óptimo confirmado en el límite q->0 (no es borde de grilla: 0.0001,
+0.0005 y 0.0 dan el mismo resultado, 0.207/0.463/1.281-1.283). R² y MAE
+mejoran sustancial -- el modelo de Cu tenía un sesgo negativo
+persistente, visible en el panel de error de
+`reports/fig_tendencia_kalman_cu_vs_lab.png`, y corregirlo ayuda mucho
+a esas dos métricas, que son muy sensibles a sesgo sistemático. Pero
+corr **baja** -- el corrector arregla el desplazamiento, no la forma de
+la relación (que es lo que corr mide), y reaccionar a la deriva
+reciente mete algo de varianza. Interpretación: Cu no falla por un
+offset simple (como sí parece ser el caso de Fe), falla por ruido de
+medición en el canal -- corregir el offset no resuelve el problema de
+fondo. **Decisión pendiente de criterio editorial**: si lo que importa
+para la tesis es exactitud absoluta (MAE/R²), adoptarlo; si es el techo
+de colocación triple (corr), no. Código:
+`notebooks/23_backtest_corrector_kalman_cu.py`.
+
+### 9.4 ¿Escalar antes o después de ortogonalizar? -- no ayuda, y van 6 controles negativos seguidos
+
+Solo podía importar para clustering (para regresión, §2.5 ya prueba que
+es un no-op algebraico). Medido con GMM k=3, sobre las 314 muestras con
+ley real, contra un control aleatorio del mismo tamaño de grupo:
+
+```
+ley     A (actual)   B (invertido)   control (azar, tam. B)
+pFe        0.166         0.207              0.310
+pCu        0.418         0.482              0.590
+pMo        0.620         0.636              0.594
+pZn        0.264         0.240              0.303
+```
+
+El control supera a B en 3 de 4 leyes -- la aparente mejora de invertir
+el orden es ruido de partición, no señal del reordenamiento. **Dejar el
+pipeline como está.**
+
+**Hallazgo colateral, más importante que la pregunta original**: esta
+es la **sexta** vez en la sesión (insoluble x4, cabeza, y ahora esto)
+que un control aleatorio iguala o supera al cambio real bajo el
+`KFold(shuffle=True)` de la etapa 5. Con el tamaño de muestra actual
+(~307-314), casi cualquier repartición de cluster puede parecer una
+mejora si no se contrasta contra el azar. Esto pone en duda no solo
+cada cambio probado con esta validación, sino **el método de
+evaluación de la etapa 5 en sí** -- que sigue siendo el mismo
+`KFold(shuffle=True)` que ya se identificó como optimista en
+`data2Tesis` (ADR de `decisiones.md`: "Validación temporal: de `KFold`
+barajado a walk-forward con purga y embargo") y que **nunca se corrigió
+en V2** para la etapa 5, solo para la recalibración de Fe contra el
+compósito (celda 10). Queda como hilo abierto de mayor prioridad que
+cualquiera de los específicos de esta sesión. Código:
+`notebooks/24_orden_escalado_ortogonalizacion.py`,
+`notebooks/25_impacto_orden_en_cu_mo.py`.
+
+### 9.5 `pSol` de alta frecuencia -- no existe en ninguna fuente revisada
+
+Se evaluó si había sólidos de laboratorio a alta frecuencia (para
+ortogonalizar contra dilución real en vez de `n6sc`, que §2.4 ya probó
+que no mide el sólido). Revisadas las dos fuentes:
+
+- **Compósito de PI** (`LABCOMPOSITO.csv`, cada 12h): solo 4 tags --
+  Fe, Cu, Ins, Mo (`7100AIP101-104MAN`). **No trae `pSol`.**
+- **Base de datos** (`works4cdp_assay`): `pSol` existe, pero a la
+  misma cadencia baja que el insoluble -- mediana de 67.8h entre
+  lecturas, 366 muestras desde 2021-07 para `sample_id=24`
+  (Concentrado Colectivo, el mejor de los 15 `sample_id` revisados).
+
+**No hay sólidos de alta frecuencia en ningún sistema al que se tenga
+acceso hoy.** Falta ingresar ese dato a la base de datos (instrumentación
+u otra fuente) antes de poder medir si ayuda -- queda como hilo abierto,
+bloqueado por adquisición, no por análisis.

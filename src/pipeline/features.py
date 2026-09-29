@@ -54,7 +54,11 @@ def features_cierre(df: pd.DataFrame) -> pd.DataFrame:
     -------
     DataFrame con las columnas '<metal>_f', mismo índice que df.
     """
-    suma = df[METALES].sum(axis=1)                        # Σ de los 4 canales de metal (el "cierre")
+    # min_count=len(METALES): si falta CUALQUIER metal (NaN, p.ej. un valor de
+    # error -9999 recuperado por limpieza.py), la suma debe ser NaN, no la
+    # suma parcial de los 3 restantes -- si no, las otras 3 fracciones
+    # saldrían mal (denominador entendido de menos) en vez de indefinidas.
+    suma = df[METALES].sum(axis=1, min_count=len(METALES))  # Σ de los 4 canales de metal (el "cierre")
     suma = suma.replace(0, np.nan)                        # evita división por cero (lecturas muertas)
 
     salida = pd.DataFrame(index=df.index)                 # DataFrame de features, mismo índice

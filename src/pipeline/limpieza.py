@@ -22,15 +22,28 @@ from .features import features_cierre                     # fracciones de cierre
 def _filtrar_invalidos(df: pd.DataFrame) -> pd.DataFrame:
     """Aplica los tres filtros deterministas de calidad (no requieren modelo).
 
-    1. Elimina códigos de error del analizador (-9999).
+    1. Código de error del analizador (-9999): se descarta la FILA solo si
+       los 5 canales están en error simultáneo (lectura totalmente inválida).
+       Si el error es parcial (algún canal, no todos), la fila se RECUPERA:
+       los canales en -9999 pasan a NaN explícito y el resto de la fila se
+       conserva -- antes se perdían los otros 4 canales válidos por uno malo.
+       El NaN resultante lo maneja _matriz_anomalia()/limpiar() más abajo.
     2. Elimina lecturas en cero simultáneo (planta/analizador detenido).
-    3. Elimina 'sensor congelado' (vector idéntico repetido >= 3 veces).
+    3. Elimina 'sensor congelado' (vector idéntico repetido >= 3 veces). Una
+       fila con NaN (del punto 1) no se puede juzgar como congelada -- no
+       tiene con qué compararse -- así que pasa este filtro sin evaluarse.
     """
-    df = df[~(df[CANALES] == -9999).any(axis=1)]          # quita filas con algún -9999
+    m_error = df[CANALES] == -9999
+    df = df[~m_error.all(axis=1)].copy()                  # descarta solo si TODOS los canales están en error
+    m_error = df[CANALES] == -9999                        # recalculado sobre lo que queda
+    if m_error.to_numpy().any():
+        df[CANALES] = df[CANALES].mask(m_error)           # recupera la fila: el canal puntual pasa a NaN
+
     df = df[~(df[CANALES] == 0).all(axis=1)].copy()       # quita filas con los 5 canales en 0
 
+    tiene_nan = df[CANALES].isna().any(axis=1)            # fila recuperada del punto 1: no evaluable aquí
     repeticiones = df.groupby(CANALES)[CANALES[0]].transform("size")  # nº de repeticiones de cada vector
-    df = df[repeticiones < 3].copy()                      # conserva vectores que aparecen menos de 3 veces
+    df = df[tiene_nan | (repeticiones < 3)].copy()        # conserva las recuperadas + las no congeladas
     return df                                             # devuelve el DataFrame filtrado
 
 
@@ -40,10 +53,16 @@ def _matriz_anomalia(df: pd.DataFrame, robusto: bool) -> pd.DataFrame:
     robusto=True  -> fracciones de cierre (CAMBIO 4, recomendado).
     robusto=False -> intensidades absolutas (comportamiento histórico, se
                      conserva solo para poder reproducir resultados antiguos).
+
+    OJO: NO se descartan aquí las filas con NaN (canal recuperado en
+    _filtrar_invalidos). Se devuelven completas para que limpiar() decida
+    qué hacer con las incompletas -- si se hiciera dropna() aquí, una fila
+    recuperada del filtro de -9999 se perdería igual dos pasos después, sin
+    dejar rastro de por qué.
     """
     if robusto:                                           # --- modo robusto a la deriva ---
-        return features_cierre(df).dropna()               # fracciones m/Σm, sin NaN
-    return df[CANALES].dropna()                           # --- modo histórico: intensidades absolutas ---
+        return features_cierre(df)                        # fracciones m/Σm (puede traer NaN)
+    return df[CANALES]                                    # --- modo histórico: intensidades absolutas ---
 
 
 def limpiar(df: pd.DataFrame, detector: IsolationForest | None = None,
@@ -80,7 +99,9 @@ def limpiar(df: pd.DataFrame, detector: IsolationForest | None = None,
     """
     df = _filtrar_invalidos(df)                           # aplica los filtros deterministas
 
-    x = _matriz_anomalia(df, robusto)                     # matriz de trabajo (cierre o absolutas)
+    x = _matriz_anomalia(df, robusto)                     # matriz de trabajo (puede traer NaN recuperado)
+    completas = x.dropna()                                # solo estas se pueden evaluar en el IsolationForest
+    idx_recuperadas = df.index.difference(completas.index)  # canal recuperado -> no evaluable, NO se borra
 
     if detector is None:                                  # --- modo ENTRENAMIENTO ---
         detector = IsolationForest(                       # instancia el detector
@@ -88,13 +109,17 @@ def limpiar(df: pd.DataFrame, detector: IsolationForest | None = None,
             contamination=CONTAMINACION_ANOMALIA,         # proporción esperada de anomalías reales (2%)
             random_state=RANDOM_STATE,                    # reproducibilidad
         )
-        detector.fit(x)                                   # ajusta sobre la matriz elegida
+        detector.fit(completas)                           # ajusta solo sobre filas completas
         detector._robusto = robusto                       # marca el modo en el artefacto (lo lee la inferencia)
 
-    etiquetas = detector.predict(x)                       # -1 = anomalía, 1 = normal
-    idx_normales = x.index[etiquetas == 1]                # índices marcados como normales (== 1, no != -1)
+    etiquetas = detector.predict(completas)               # -1 = anomalía, 1 = normal (solo filas completas)
+    idx_normales = completas.index[etiquetas == 1]         # índices marcados como normales (== 1, no != -1)
 
-    df_limpio = df.loc[idx_normales].copy()               # conserva solo las filas normales
+    # Se conservan las normales (evaluadas y OK) MÁS las recuperadas (no se
+    # pudieron evaluar por el canal en NaN, pero no se descartan por eso).
+    idx_conservar = idx_normales.union(idx_recuperadas)
+    df_limpio = df.loc[idx_conservar].copy()
+
     return df_limpio, detector                            # devuelve datos limpios + el detector
 
 
@@ -136,8 +161,12 @@ def _main():
     df_limpio, detector = limpiar(df, detector, robusto=robusto)
     print(f"Modo del detector: {'cierre (robusto a deriva)' if robusto else 'intensidades absolutas'}")
 
+    recuperadas = int(df_limpio[CANALES].isna().any(axis=1).sum())
+
     df_limpio.to_csv(args.output, index=False)
     print(f"Filas finales tras limpieza: {len(df_limpio)}")
+    if recuperadas:
+        print(f"  de las cuales recuperadas (canal en error parcial, ahora NaN): {recuperadas}")
     print(f"CSV limpio guardado en: {args.output}")
 
     if args.artifact_in is None:
