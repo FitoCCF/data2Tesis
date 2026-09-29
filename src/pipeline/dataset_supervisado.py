@@ -67,11 +67,17 @@ def construir_dataset_supervisado(df_assays: pd.DataFrame,
     # OJO: df_assays (works4cdp_assay) puede traer n1fe..n6sc junto con las leyes -> si
     # también las tomamos de df_cluster, pandas las duplica como n6sc_x/n6sc_y (la columna
     # 'n6sc' deja de existir). Por eso solo se toman de df_cluster las que NO estén ya en df_assays.
+    #
+    # NO se arrastran n1fe_ortho..n4mo_ortho: son la salida de la etapa 3 (YA escaladas,
+    # pese al nombre "_ortho" heredado de la etapa 2) y ningún consumidor las usa -- la
+    # etapa 5 (modelos.py: _recomputar_features) siempre recalcula ortho desde las crudas
+    # con el artefacto congelado, nunca lee estas columnas. Se detectó en sesión que
+    # dejarlas invita a reaplicar power+scaler sobre un valor ya escalado (doble escalado
+    # -> colapso del GMM a un solo cluster). Ver docs/bitacora_analisis.md.
     crudas = ["n1fe", "n2cu", "n3zn", "n4mo", "n6sc"]
     crudas_de_cluster = [c for c in crudas if c not in df_assays.columns]
     cols = llave + crudas_de_cluster + [
-        "n1fe_ortho", "n2cu_ortho", "n3zn_ortho", "n4mo_ortho",  # ortogonalizadas (solo existen aquí)
-        "cluster_kmeans", "cluster_gmm",                        # etiquetas de cluster
+        "cluster_kmeans", "cluster_gmm",                        # etiquetas de cluster (no features)
     ]
     cols = [c for c in dict.fromkeys(cols) if c in df_cluster.columns]  # solo las que existan, sin duplicar
     df_cluster = df_cluster[cols].copy()                  # subconjunto de columnas

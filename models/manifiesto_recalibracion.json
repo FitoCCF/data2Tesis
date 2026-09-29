@@ -1,16 +1,16 @@
 {
-  "generado_utc": "2026-09-25T22:43:48.712661+00:00",
+  "generado_utc": "2026-09-29T00:09:06.960990+00:00",
   "script": "notebooks/10_recalibracion_composito.py",
   "entradas": {
     "intensidades": {
-      "ruta": "/home/daigo/data2TesisV2/data/processed/intensidades_cobre.csv",
+      "ruta": "/home/fito/Proyects/data2TesisV2/data/processed/intensidades_cobre.csv",
       "sha256": "678471efaef92dd3b9803356c27b3a507d6ec48794fa85a351aa920d6a8d9ef0",
       "filas_validas": 36173
     },
     "composito": {
-      "ruta": "/home/daigo/data2TesisV2/data/raw/assay_lab_courier_pi.csv",
-      "sha256": "8bbb631e550774c45b8c85a90820c96fd875efff5b5a2152f28fba1bb3c433ec",
-      "ensayos": 2590
+      "ruta": "/home/fito/Proyects/data2TesisV2/data/raw/assay_lab_courier_pi.csv",
+      "sha256": "8aae3355ec10d8e5abd7d4796531341a0cb8c3d8ac445014cbe1c8df1dd4895b",
+      "ensayos": 2594
     }
   },
   "parametros": {
@@ -107,10 +107,10 @@
     "scikit_learn": "1.9.1"
   },
   "artefactos": {
-    "calibracion_composito": "/home/daigo/data2TesisV2/models/calibracion_composito.joblib",
-    "corrector_sesgo": "/home/daigo/data2TesisV2/models/corrector_sesgo.joblib",
-    "detector_anomalias": "/home/daigo/data2TesisV2/models/anomaly_detector.joblib",
-    "dataset_alineado": "/home/daigo/data2TesisV2/data/processed/composito_12h_alineado.csv",
-    "backtest": "/home/daigo/data2TesisV2/data/processed/backtest_recalibracion.csv"
+    "calibracion_composito": "/home/fito/Proyects/data2TesisV2/models/calibracion_composito.joblib",
+    "corrector_sesgo": "/home/fito/Proyects/data2TesisV2/models/corrector_sesgo.joblib",
+    "detector_anomalias": "/home/fito/Proyects/data2TesisV2/models/anomaly_detector.joblib",
+    "dataset_alineado": "/home/fito/Proyects/data2TesisV2/data/processed/composito_12h_alineado.csv",
+    "backtest": "/home/fito/Proyects/data2TesisV2/data/processed/backtest_recalibracion.csv"
   }
 }

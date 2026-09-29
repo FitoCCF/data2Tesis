@@ -117,7 +117,11 @@ def alinear_con_composito(inten: pd.DataFrame, lab: pd.DataFrame) -> pd.DataFram
     media_h = VENTANA_COMPOSITO_H / 2                     # medio ancho de la ventana (6 h)
     bloques = inten.resample(BLOQUE_RESAMPLE).mean().dropna()  # submuestreo a 30 min (descorrelaciona)
 
-    leyes = [c for c in MAPA_LEY_COMPOSITO.values() if c in lab.columns]  # leyes disponibles
+    # "ins" no es una ley a recalibrar (no está en MAPA_LEY_COMPOSITO) pero se
+    # transporta igual si está presente: la usa src.pipeline.ruteo_insoluble
+    # para el experimento de ruteo por régimen (hilo abierto 5.4). No afecta
+    # el filtrado de filas de cargar_composito(), solo qué columnas viajan.
+    leyes = [c for c in list(MAPA_LEY_COMPOSITO.values()) + ["ins"] if c in lab.columns]  # leyes disponibles
 
     filas = []                                            # acumulador de filas alineadas
     for _, ensayo in lab.iterrows():                      # recorre cada ensayo del compósito

@@ -5,7 +5,7 @@ sesión de diagnóstico. Sirve para retomar el trabajo en otra máquina sin repe
 los experimentos. **Todos los números de este documento están medidos**, no
 estimados; cada uno indica el protocolo con que se obtuvo.
 
-Última actualización: 2026-09-25
+Última actualización: 2026-09-28
 
 ---
 
@@ -29,6 +29,22 @@ Archivos mínimos para reproducir:
 | `data/raw/assay_lab_courier_pi.csv` | compósito 12 h, 2590 ensayos (referencia de validación) |
 | `data/processed/intensidad_cobre_24_completo_filtrado.csv` | 314 muestras puntuales de laboratorio |
 | `data/raw/assay_lab_AIQ_pi.csv` | salida de la calibración de fábrica del analizador |
+
+**Si falta `assay_lab_courier_pi.csv` pero existe `data/raw/LABCOMPOSITO.csv`**
+(export directo de PI con los tags sin renombrar, vía
+`scripts/extraer_labcomposito.py`): regenerarlo con el mapeo `TAGS_COMPOSITO`
+de `config.py`, no hay que volver a extraer de PI —
+
+```python
+import pandas as pd
+from src.pipeline.config import TAGS_COMPOSITO, DATA_RAW
+lab = pd.read_csv(DATA_RAW / "LABCOMPOSITO.csv").rename(columns={"t": "idx", **TAGS_COMPOSITO})
+lab = lab.set_index("idx"); lab.index.name = None
+lab.to_csv(DATA_RAW / "assay_lab_courier_pi.csv")
+```
+
+Verificado en sesión (2026-09-28): reproduce el backtest oficial exacto
+(corr pFe = 0.508). Ver §8.5.
 
 Luego:
 
@@ -408,6 +424,16 @@ para los 2594 compósitos, es dato de laboratorio (permitido en tesis) y llega
 cada 12 h. Medir si rutear por el insoluble del turno anterior reproduce el
 +0.144 de pFe en el backtest contra el compósito.
 
+**Actualización 2026-09-28 — CERRADO, no se sostiene.** Se midió, con el
+backtest walk-forward real y contra un control negativo (mismo tamaño de
+grupos, sin información real): el control iguala o supera al insoluble real en
+Fe, Cu y Zn; solo en Mo el insoluble real queda 0.03 por delante, dentro del
+ruido que ya muestra ese mismo control entre sus propias celdas (0.15 a 0.97).
+El +0.144 de la sección 2.6 era CV 5-fold con el insoluble **simultáneo**
+(no disponible en producción); con el insoluble del turno anterior y
+validación honesta, el efecto no se distingue de repartir clusters al azar.
+Detalle completo, metodología y las otras tres pruebas relacionadas en §8.
+
 ### 5.4b Ruteo por variables de planta (solo producción)
 Restricción del proyecto: **los datos de proceso son sensibles y no se pueden
 usar en la tesis**; las intensidades sí se pueden anonimizar. Para producción sí
@@ -422,6 +448,11 @@ Experimento propuesto: extraer 6–10 tags de PI desde 2025-07, alinear a las
 ventanas de 12 h, medir (a) cuánto predicen el insoluble de laboratorio y (b) si
 rutear por ellas reproduce el +0.144 en el backtest contra el compósito. Si (a)
 da |corr| > 0.6, hay camino para llevar el Fe hacia el techo de 0.743.
+
+**Actualización 2026-09-28.** La premisa (+0.144 reproducible) queda retirada
+por §5.4. Este experimento pierde su justificación tal como estaba planteado
+--- si se retoma, hay que remedir el punto (b) contra un control aleatorio
+antes de invertir en extraer los 6-10 tags de planta.
 
 ### 5.5 Validar pZn o sacarlo de resultados
 No tiene ninguna validación contra el compósito, que no trae Zn. Contra las 314
@@ -461,11 +492,193 @@ estimación de un analizador en línea, con un caso de éxito en molibdeno"**.
 - **Cu** va como límite documentado, con techo 0.634 y explicación física.
 - **Zn** sale de resultados o va explícitamente sin validación independiente.
 - **Etapas 2–4** se reportan como hipótesis arquitectónica evaluada que **no** se
-  sostuvo con ruteo espectral, con el +0.001 como evidencia — y con el +0.144 por
-  insolubles como demostración de que el efecto existe pero el instrumento no
-  puede explotarlo.
+  sostuvo con ruteo espectral, con el +0.001 como evidencia. El insoluble real
+  del turno anterior **tampoco** sostiene el ruteo bajo validación honesta
+  (§5.4, §8): el efecto de régimen sigue siendo real en principio (§2.6), pero
+  ninguna variable disponible hoy —ni el espectro, ni el insoluble rezagado, ni
+  la cabeza del circuito— permite explotarlo en la práctica.
 
 Aportes defendibles: cuantificación del techo por colocación triple, superar la
 calibración comercial en los tres elementos en MAE, diagnóstico de deriva con
 detector inmune, formalización de la práctica manual de los operadores (ecuación
 mensual + offset diario), y un conjunto de resultados negativos rigurosos.
+
+---
+
+## 8. Sesión 2026-09-28 — cierre del hilo del insoluble y del régimen de mineral
+
+Cuatro pruebas distintas de usar el insoluble (o una fuente similar) para
+mejorar clustering/ruteo. Las cuatro veces, un control negativo (mismo tamaño
+de grupo, sin información real) igualó o superó a la señal real. Metodología y
+cifras completas de cada una, en el orden en que se corrieron.
+
+### 8.1 Bug de datos encontrado y corregido: columnas `_ortho` mal etiquetadas
+
+`data/processed/intensidad_cobre_24_completo_filtrado.csv` (y `_completo.csv`)
+traían columnas `n1fe_ortho..n4mo_ortho` que **no son el ortogonalizado crudo**
+(salida de la etapa 2) sino el **ya escalado** (salida de la etapa 3) —mismo
+nombre en dos archivos, dos significados. Confirmado con un caso concreto
+(timestamp 2022-12-05 15:38:30): `n1fe_ortho = 8378.12` en
+`intensidad_cobre_24_orthogonalized.csv` (crudo) vs `n1fe_ortho = 3.16` en el
+archivo supervisado (escalado).
+
+**Impacto real: ninguno en el pipeline de producción.**
+`src/pipeline/modelos.py:_recomputar_features` nunca lee esas columnas —
+siempre recalcula ortho y cluster desde las intensidades crudas con los
+artefactos congelados, que es como debe ser para que entrenamiento e
+inferencia sean idénticos. El riesgo era solo para quien reutilizara esas
+columnas a mano asumiendo que eran crudas (aplicar power+scaler otra vez sobre
+un valor ya escalado colapsa el GMM a un solo cluster — así se detectó).
+
+**Corregido:** se eliminaron esas 4 columnas de ambos CSV y se actualizó
+`src/pipeline/dataset_supervisado.py` para que no vuelva a arrastrarlas. Las
+columnas `cluster_kmeans`/`cluster_gmm` sí se conservan (son etiquetas, no
+features, y sí las usa el pipeline).
+
+### 8.2 Prueba 1 — Ruteo de pFe por insoluble del turno anterior (walk-forward)
+
+Rediseño honesto de la sección 2.6: `ins_lag` = insoluble del compósito
+**anterior** (nunca el simultáneo, que no existe en producción), terciles
+calculados **solo con la ventana móvil vigente** en cada reentreno (270 d,
+igual que la recalibración de Fe), backtest walk-forward sobre las mismas 228
+ventanas fuera de muestra.
+
+```
+                  R2 global   R2 ruteo   ganancia
+ruteo real (ins_lag)  0.160      0.242     +0.082
+control (barajado)    0.160      0.220     +0.061
+```
+
+Ganancia real vs. control: **+0.021** — dentro del ruido. El +0.144 de la
+sección 2.6 (CV 5-fold, insoluble simultáneo) no sobrevive ni al cambio de
+validación ni al cambio a insoluble rezagado; no se separó cuál de los dos
+pesa más. Código: `src/pipeline/ruteo_insoluble.py`,
+`notebooks/12_experimento_ruteo_insoluble.py`.
+
+### 8.3 Prueba 2 — Cabeza (rebose de hidrociclones) como feature de clustering
+
+Se exploró una segunda fuente de régimen: el rebose de hidrociclones (cabeza
+del circuito, antes de flotación), streams `Rebose Hidrociclones L1/L2`
+(`works4cdp_assay.sample_id` 17 y 18, mismo `equipment_id=5` que el
+Concentrado Colectivo).
+
+- **L1**: 384 filas históricas pero solo **24 en los últimos 12 meses**
+  (15 con `pIns`) — casi sin dato reciente.
+- **L2**: 406 filas, 85/año recientes, pero `corr(n2cu_L2, pCu_lab) = 0.04`
+  crudo — el usuario confirmó que hubo cambios de calibración en el histórico
+  de intensidades de esta línea, lo que explica la correlación cruda pobre.
+
+Con L2 alineado al stream de 15 min por último valor conocido (cadencia
+mediana 72 h → cada lectura de cabeza se repite ~86 veces seguidas): el BIC se
+desploma con la cabeza real, **pero colapsa exactamente igual con la cabeza
+barajada** (mismo orden de magnitud) — es el artefacto de bloques repetidos,
+no información real.
+
+Repitiendo a la granularidad correcta (una fila por época de cabeza, ~266
+filas en vez de 23,058): el traslape real de alta frecuencia es mínimo (solo
+58 de 267 épocas con ≥5 lecturas de courier, porque el courier de alta
+frecuencia solo existe desde 2025-07 y la cabeza tiene historia desde 2021).
+Con n=58 el resultado es ruido en ambas direcciones (real pierde en silhouette
+GMM contra el control, gana en BIC) — **inconcluso, no descartado**: falta
+traslape de alta frecuencia, no evidencia de que no sirva. Ver §8.4 sobre por
+qué no hay una vía de mayor frecuencia disponible para esta variable en
+particular (si la hay para la cabeza, no se investigó).
+
+Código: `notebooks/13_experimento_cluster_cabeza.py`,
+`notebooks/14_experimento_cluster_cabeza_epocas.py`.
+
+### 8.4 Confirmación: el courier NO mide insolubles
+
+Se investigó si el analizador mismo genera una intensidad de insoluble
+(`a7a7`/`a6sol` en `works4cdp_assay`) que sirviera de proxy de alta frecuencia,
+evitando la cadencia de 12 h del compósito de laboratorio.
+
+- El canal crudo análogo a `n1fe..n4mo` para insoluble es `n7ech7` — está
+  **0/548 no nulo** para `sample_id=24` (Concentrado Colectivo,
+  `equipment_id=5`). Sí existe en otros equipos del mismo analizador
+  multiplexado (`equipment_id=1`: ~70-80% de llenado), pero no en el stream
+  que le interesa a este proyecto.
+- `a7a7`/`a6sol` sí tienen valores reales (no son el centinela `-1`) para
+  `sample_id=24`, pero **confirmado directamente con el equipo/operador**: son
+  una estimación que el operador calcula a partir de las demás leyes (Fe, Cu,
+  Zn, Mo), no una lectura del sensor. Medido: `corr(a7a7, pIns_lab) = 0.116` —
+  consistente con que es una fórmula, no una medición, y con el R²=0.088 de la
+  sección 2.11 (predecir insoluble desde el espectro).
+
+**Conclusión: no hay atajo de alta frecuencia para el insoluble en este
+stream.** La única fuente legítima sigue siendo el compósito de laboratorio vía
+PI (12 h) o las muestras puntuales (`pIns` en la BD).
+
+### 8.5 Prueba 3 — Insoluble en el clustering (pipeline 0.5→1→2→3→4)
+
+Diseño acordado: `ins_t` (último insoluble conocido, merge_asof hacia atrás)
+entra en la etapa 3 (Yeo-Johnson + StandardScaler) junto a las 4 features
+ortogonalizadas de siempre; etapas 1-2 sin cambios. Evaluado con
+`eta² = SS_entre_clusters / SS_total` contra las leyes reales de las 314
+muestras puntuales (recalculando el ortogonalizado crudo por timestamp desde
+el stream — ver §8.1, el bug que esto destapó).
+
+```
+ley    oficial(prod)  base(refit)  +ins_t real  +ins_t control
+pFe        0.194         0.215        0.176          0.212
+pCu        0.140         0.135        0.056          0.135
+pMo        0.147         0.140        0.117          0.137
+pZn        0.065         0.073        0.095          0.074
+```
+
+El insoluble real separa **peor** Fe, Cu y Mo que sin él, y el control
+(insoluble barajado en el entrenamiento) rinde igual que sin insoluble en las
+tres. Solo Zn mejora un poco, con eta² bajo en todos los casos (más
+compatible con ruido). Código:
+`notebooks/15_pipeline_insoluble_clustering.py`.
+
+### 8.6 Prueba 4 — Insoluble como variable de ruteo en la etapa 5 (modelos locales)
+
+Última prueba, con la métrica que de verdad importa: R² de los modelos locales
+contra ley real, mismo `KFold(5, shuffle=True)` que ya usa `modelos.py`, única
+diferencia el cluster usado para rutear.
+
+```
+ley   R2 local (oficial)  R2 local (+ins_t real)  R2 local (control barajado)
+pFe         0.161                 0.218                    0.305
+pCu         0.392                 0.500                    0.604
+pMo         0.620                 0.659                    0.625
+pZn         0.248                 0.228                    0.334
+```
+
+El control aleatorio **gana en 3 de 4 leyes**, con margen (hasta −0.10 en Cu).
+Solo en Mo el insoluble real gana por +0.033 — dentro del ruido que ya muestra
+el propio control entre sus celdas individuales (R² de 0.15 a 0.97 en la misma
+corrida). Veredicto: **no rutear por insoluble.** Figuras:
+`reports/fig_insoluble_vs_control.png`, `reports/fig_tendencia_insoluble.png`.
+Código: `notebooks/16_modelos_locales_con_insoluble.py`,
+`notebooks/17_control_ruteo_insoluble.py`, `notebooks/18_*`, `notebooks/19_*`.
+
+### 8.7 Reconstrucción de `assay_lab_courier_pi.csv` y verificación cruzada
+
+Este archivo (esperado por `cargar_composito()`/celda 10) no existía en este
+clon del repo — solo `data/raw/LABCOMPOSITO.csv` (export crudo de PI, tags sin
+renombrar). Se regeneró aplicando el mapeo `TAGS_COMPOSITO` ya definido en
+`config.py` (ver receta en §0). Al correr `notebooks/10_recalibracion_composito.py`
+con el archivo regenerado, el backtest reprodujo **exacto** lo ya documentado
+(`corr pFe = 0.508`, fábrica 0.470) — verificación cruzada de que
+`LABCOMPOSITO.csv` y el `assay_lab_courier_pi.csv` original son la misma
+fuente, solo con formato distinto.
+
+### 8.8 Figura de validación filtrada desde 2026-05-01 ("la mejor estrategia")
+
+Con el backtest reconstruido, se regeneró la evaluación unificada de la celda
+11 (Fe recalibrado + Cu/Mo modelo original, contra el mismo compósito)
+filtrada a partir del 2026-05-01 (216 de las 228 ventanas totales, que ya
+cubrían casi por completo ese rango):
+
+```
+elemento   n    R2    MAE    corr   pendiente
+Fe        216  0.254  0.921  0.516    0.324
+Cu        216  0.071  1.417  0.470    0.251
+Mo        216  0.905  0.162  0.953    0.882
+```
+
+Consistente con las cifras de todo el período abr-ago. Código:
+`notebooks/20_figura_validacion_desde_mayo.py`, figura en
+`reports/fig_validacion_desde_mayo.png`.
