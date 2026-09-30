@@ -15,13 +15,99 @@ DATA_FINAL = PROJECT_ROOT / "data" / "final"              # resultados finales
 MODELS_DIR = PROJECT_ROOT / "models"                      # carpeta de artefactos .joblib
 REPORTS_DIR = PROJECT_ROOT / "reports"                    # figuras/tablas de salida
 
-# --- Canales espectrales (n6sc = sólido en la muestra / dilución) ---
+# --- Base de datos Postgres: tabla y columnas extraíbles ---
+# Única fuente de verdad de qué se puede pedir a la BD. src/database/extractor.py
+# arma la consulta a partir de estos grupos: agregar una ley o un canal nuevo
+# es agregar un nombre aquí, no editar SQL.
+TABLA_BD = "works4cdp_assay"                              # tabla que llena api2db.py (data4cdpv1_local)
+SAMPLE_ID_COURIER = 24                                    # "Concentrado Colectivo" en works4cdp_sample
+LLAVES_BD = ["date", "time", "instance"]                  # siempre se extraen: identifican la fila
+COLS_BD = {
+    "intensidades": ["n1fe", "n2cu", "n3zn", "n4mo",      # canales del analizador (courier)
+                     "n5ech5", "n6sc", "n7ech7"],
+    "leyes": ["pFe", "pCu", "pZn", "pMo", "pIns", "pSol"],  # ensayos de laboratorio (misma fila)
+}
+
+# --- PI OSIsoft vía pasarela PiGateway (src/acquisition/pi_client.py) ---
+# El token NO va en el código (el repo está en GitHub): se lee de PI_TOKEN o
+# de ~/.pi_token (ver src/acquisition/from_pi.py: cargar_token).
+PI_HOST = "10.25.18.85"                                   # pasarela; PI_GATEWAY_HOST la sobreescribe
+PI_PUERTO = 5173                                          # puerto de esta instalación (no el 5000 del cliente)
+FECHA_INICIO_COURIER = "2025-07-13 15:00:00"              # no hay historia de los tags del courier antes
+TAGS_COURIER = {                                          # tag PI -> canal del pipeline
+    "_296290_ConcFinal_CanalFe_ABB": "n1fe",
+    "_296290_ConcFinal_CanalCu_ABB": "n2cu",
+    "_296290_ConcFinal_CanalZn_ABB": "n3zn",
+    "_296290_ConcFinal_CanalMo_ABB": "n4mo",
+    "_296290_ConcFinal_CanalSc_ABB": "n6sc",
+}
+# El PI no trae n5ech5 ni n7ech7: solo la BD los tiene.
+
+# --- Crudos de la etapa 0: UN archivo por fuente, no se modifican después ---
+#   A  muestreo con ensayo de laboratorio (BD, ~cada 3 días, desde 2022-12)
+#   B  operación continua del courier (PI recorded: eventos cada 100 s, lecturas reales ~cada 21 min, desde 2025-07-13)
+#   C  compósito de laboratorio de 12 h (PI, fe/cu/ins/mo; sin Zn ni Sol)
+RAW_COURIER_BD = DATA_RAW / "courier_bd.csv"
+RAW_COURIER_PI = DATA_RAW / "courier_pi.csv"
+RAW_COMPOSITO = DATA_RAW / "composito_pi.csv"
+
+# --- Etapa 1a: limpieza por fuente (src/pipeline/limpieza_fuentes.py) ---
+LIMPIO_COURIER_PI = DATA_PROCESSED / "courier_pi_lecturas.csv"   # una fila por lectura real del courier
+LIMPIO_COURIER_BD = DATA_PROCESSED / "courier_bd_limpio.csv"
+LIMPIO_COMPOSITO = DATA_PROCESSED / "composito_limpio.csv"
+TOL_EVENTO = "5s"             # eventos de metales a <= esto son el mismo ciclo (a veces n1fe llega 1 s antes)
+TOL_N6SC = "60s"              # ventana para pegar n6sc a la lectura de los metales (solo actúa en filas partidas)
+UMBRAL_SOSTENIDA = "2h"       # lectura republicada más de esto -> bandera 'sostenida' (p99 normal: 33 min)
+Z_LEY_SOSPECHOSA = 5.0        # |ley - mediana| / (1.4826·MAD) por encima -> candidata a bandera, no borrado
+Z_CANAL_RESPALDO = 2.0        # ...salvo que su canal del courier también se desvíe > esto en la misma dirección
+CANAL_DE_LEY = {"pFe": "n1fe", "pCu": "n2cu", "pZn": "n3zn", "pMo": "n4mo"}  # pIns/pSol sin canal propio
+
+# --- Etapa 1b: unificación A + B (src/pipeline/unificacion.py) ---
+UNIFICADO = DATA_PROCESSED / "courier_unificado.csv"     # tabla maestra: una fila por lectura del courier
+VENTANA_CALCE = "13h"         # busca la lectura del PI con los mismos valores a <= esto de la hora de la BD
+                              # (13 h y no minutos: 3 filas de la BD de jun-2026 tienen la hora corrida 12 h)
+UMBRAL_HORA_BD = "1h"         # calce más lejos que esto -> bandera 'hora_bd_desfasada' (medido: p95 = 28 min)
+
+# --- Corte único del pipeline (etapa 1c en adelante) ---
+# Toda etapa que AJUSTA algo (IsolationForest, escalado,
+# GMM, modelos) usa solo lecturas hasta este día inclusive. Lo posterior es la
+# prueba final. 2026-05-31: train 347 muestras con ley; test jun-ago con 176
+# compósitos y 18 muestras de la BD; deja en train la mayor parte del período
+# con n6sc desfasado (abr-jun 2026). Ver docs/bitacora_analisis.md.
+FECHA_CORTE_TRAIN = "2026-05-31"
+FECHA_INICIO_PRODUCCION = "2026-09-01"                   # desde aquí periodo = "produccion" (datos nuevos, nunca vistos)
+LIMPIO = DATA_PROCESSED / "courier_limpio.csv"           # tabla maestra con banderas de la 1c
+
+# --- Canales espectrales ---
+# n6sc es el canal de dispersión (Sc). NO mide el sólido de la muestra:
+# corr(n6sc, pSol) = -0.15 sobre 344 muestras; log(ΣI) sí (+0.57).
 CANALES = ["n1fe", "n2cu", "n3zn", "n4mo", "n6sc"]        # los 5 canales de intensidad
-METALES = ["n1fe", "n2cu", "n3zn", "n4mo"]                # canales que se ortogonalizan (sin n6sc)
-FEATS_CLUSTER = ["n1fe_ortho", "n2cu_ortho",
-                 "n3zn_ortho", "n4mo_ortho"]              # features del clustering (4 ortho, sin n6sc)
-FEATS_REGRESION = ["n1fe_ortho", "n2cu_ortho",
-                   "n3zn_ortho", "n4mo_ortho", "n6sc"]    # features de la regresión (ortho + n6sc)
+METALES = ["n1fe", "n2cu", "n3zn", "n4mo"]                # canales de metal (sin n6sc)
+
+# --- Etapa 2: features robustas a la deriva (src/pipeline/features.py) ---
+# Reemplaza a la ortogonalización contra n6sc (2026-09-30): sus residuos
+# arrastraban la deriva del instrumento (n2cu_ortho de +6,600 en 2022H2 a
+# -5,100 en 2026H2 con pCu casi constante), así que un GMM sobre ellos
+# separaría épocas en vez de mineral. Transformación fija: no se ajusta nada.
+FEATS_CLUSTER = ["lr_fe_cu", "lr_zn_cu", "lr_mo_cu"]      # log-cocientes contra Cu (alr, Aitchison)
+FEATS_REGRESION = ["n1fe_f", "n2cu_f", "n3zn_f", "n4mo_f", "logSumI"]  # fracciones de cierre + magnitud
+FEATURES = DATA_PROCESSED / "courier_features.csv"       # salida de la etapa 2
+# Corrección de dilución (2026-09-30). El cociente NO cancela del todo el agua:
+# a química fija, pSol p10->p90 mueve lr_fe_cu +0.91 sd (t=+12) y lr_mo_cu
+# -0.37 sd (el agua atenúa distinto Fe 6.4 keV y Cu 8.0 keV). n6sc no sirve
+# para corregirlo (corr con pSol -0.15). Proxy: dil = logSumI - EWMA(logSumI)
+# solo con lecturas pasadas; la EWMA absorbe la deriva lenta de la fuente y
+# deja la variación rápida. corr(dil, pSol) = +0.55 con halflife 90 d (7 d: 0.50).
+DIL_HALFLIFE = "90D"
+# Solo se corrige donde el laboratorio demostró el efecto (a química fija):
+# lr_fe_cu t=+12 -> se corrige; lr_mo_cu pendiente ~0 (no cambia nada);
+# lr_zn_cu SIN efecto (t=-1.3) y la corrección le CREABA uno (t=+3.3) -> no.
+DIL_CORREGIR = ["lr_fe_cu"]
+ESCALADO = DATA_PROCESSED / "courier_escalado.csv"       # salida de la etapa 3 (+ columnas <feature>_z)
+CLUSTERIZADO = DATA_PROCESSED / "courier_clusterizado.csv"  # salida de la etapa 4
+K_GRUPOS = 4                  # grupos del GMM (etapa 4). Elegido por diagnostico_k(): silhouette 0.249 y
+                              # ARI 0.856, máximo local para k>=3, y cada grupo sobre-representa un elemento
+                              # distinto confirmado por laboratorio. k=2 es la alternativa más estable (ARI 0.96).
 
 # --- Leyes químicas a estimar y el modelo elegido para cada una ---
 TARGETS = ["pFe", "pCu", "pMo", "pZn"]                    # leyes de laboratorio
@@ -33,10 +119,7 @@ RANDOM_STATE = 42                                         # fija el azar en todo
 
 # --- Nombres de los artefactos serializados (una fuente de verdad) ---
 ART_ANOMALIAS = "anomaly_detector.joblib"                # etapa 1 (limpieza)
-ART_ORTHO = "orthogonalization_regressions.joblib"       # etapa 2 (ortogonalización)
-ART_POWER = "power_transformer.joblib"                   # etapa 3 (escalado)
 ART_SCALER = "scaler.joblib"                             # etapa 3 (escalado)
-ART_KMEANS = "kmeans_model.joblib"                       # etapa 4 (clustering)
 ART_GMM = "gmm_model.joblib"                             # etapa 4 (clustering)
 ART_REGRESION = "modelos_locales_por_cluster.joblib"     # etapa 5 (modelos locales)
 
@@ -55,12 +138,12 @@ ART_REGRESION = "modelos_locales_por_cluster.joblib"     # etapa 5 (modelos loca
 # ============================================================
 
 # --- Fuente de laboratorio: compósito de 12 h (tags MAN del courier) ---
-LAB_COMPOSITO = DATA_RAW / "assay_lab_courier_pi.csv"    # compósito 12 h (turno día 07:30 / noche 19:30)
+LAB_COMPOSITO = RAW_COMPOSITO                            # compósito 12 h (turno día 07:30 / noche 19:30), etapa 0
 # Mapeo VERIFICADO contra el descriptor real del PI (2026-09-26), no deducido.
 # La version anterior de este diccionario tenia Fe y Cu invertidos y suponia un
 # tag de Zn que no existe. El error era solo documental -- ninguna etapa lo
-# usaba -- y se confirmo que las columnas de assay_lab_courier_pi.csv estan
-# bien nombradas (identicas al PI hasta 1e-6).
+# usaba -- y se confirmo contra el PI (identicas hasta 1e-6). La etapa 0
+# (from_pi.extraer_composito) ya escribe el crudo con estos nombres.
 TAGS_COMPOSITO = {"7100AIP101MAN": "fe",                 # %Fe Promedio Concentrado colectivo Courier Cobre
                   "7100AIP102MAN": "cu",                 # %Cu Promedio Concentrado colectivo Courier Cobre
                   "7100AIP103MAN": "ins",                # %Ins Concentrado colectivo Courier Cobre
@@ -68,8 +151,7 @@ TAGS_COMPOSITO = {"7100AIP101MAN": "fe",                 # %Fe Promedio Concentr
 # NOTA: el composito NO trae Zn. Y SI trae INSOLUBLES, que es la variable que
 # en el diagnostico dio +0.144 en pFe al usarse para rutear modelos locales.
 # Ver docs/bitacora_analisis.md seccion 2.6 y el hilo abierto 5.4.
-COL_TS_COMPOSITO = "Unnamed: 0"                          # columna de timestamp tal como la exporta PI
-TZ_COMPOSITO = "America/Lima"                            # PI exporta en UTC-05:00 -> se normaliza a hora local
+COL_TS_COMPOSITO = "ts"                                  # hora local naive, tal como la escribe la etapa 0
 
 # --- Alineación intensidades <-> compósito ---
 VENTANA_COMPOSITO_H = 12                                 # ancho de la ventana centrada en el ensayo (= cadencia del lab)

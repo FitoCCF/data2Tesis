@@ -1,72 +1,55 @@
 # ============================================================
-# src/database/extractor.py — Extracción de intensidades y ensayos desde Postgres
+# src/database/extractor.py — Extracción desde Postgres (works4cdp_assay)
 # ============================================================
-# Idéntico en espíritu a src/database/data/getData.py de V1 (mismas queries,
-# mismo esquema), reubicado a un solo nivel bajo src/database/ y con soporte
-# opcional de filtro por rango de fechas (se aplica en pandas DESPUÉS de traer
-# los datos, sin tocar las queries SQL originales que ya se sabe que funcionan).
+# Una sola consulta, armada a partir de los grupos de columnas de
+# config.COLS_BD. En la BD, la intensidad y la ley de laboratorio de una
+# muestra están en la MISMA fila: pedirlas juntas evita tener que reunirlas
+# después por 'instance'. Si una etapa necesita solo un grupo, lo pide con
+# grupos=("leyes",) o selecciona columnas; no hace falta otra consulta.
 # ============================================================
 
-from src.database.connection import DBManager
-from sqlalchemy import text  # Importante para usar params de forma segura
+import pandas as pd
+from sqlalchemy import text
+
+from src.database.connection import crear_engine
+from src.pipeline.config import TABLA_BD, LLAVES_BD, COLS_BD
 
 
-class Extractor(DBManager):
-    def __init__(self, table_name: str, **kwargs):
-        super().__init__(**kwargs)
-        self.table_name = table_name
+class ExtractorBD:
+    """Extractor de la tabla de ensayos. Abre una sola conexión (engine) y la
+    reutiliza en todas las consultas de la instancia."""
 
-    def get_head(self):
-        query = """
-            SELECT column_name, data_type, is_nullable
-            FROM information_schema.columns
-            WHERE lower(table_name) = lower(:t_name)
-            AND table_schema = 'public'
-            ORDER BY ordinal_position;
+    def __init__(self, db_config: dict | None = None, tabla: str = TABLA_BD):
+        self.engine = crear_engine(db_config)
+        self.tabla = tabla
+
+    def extraer(self, sample_id: int, grupos=("intensidades", "leyes"),
+                desde: str | None = None, hasta: str | None = None) -> pd.DataFrame:
+        """Filas de un sample_id con las llaves + los grupos de columnas pedidos.
+
+        grupos : nombres de config.COLS_BD ("intensidades", "leyes", ...).
+        desde, hasta : 'YYYY-MM-DD', inclusivos, opcionales. Se filtran en SQL,
+            no en pandas: la BD no devuelve el histórico completo para recortarlo.
         """
-        return self.execute_query(query, params={"t_name": self.table_name})
+        desconocidos = [g for g in grupos if g not in COLS_BD]
+        if desconocidos:
+            raise ValueError(f"Grupos desconocidos {desconocidos}; disponibles: {list(COLS_BD)}")
 
-    def get_intensity(self, sample_id: int, desde: str | None = None, hasta: str | None = None):
-        """Trae TODO el histórico de intensidades del sample_id (igual que V1).
+        columnas = LLAVES_BD + [c for g in grupos for c in COLS_BD[g]]
+        # Comillas dobles: Postgres respeta mayúsculas solo si el nombre va
+        # entre comillas ("pFe"). Los nombres vienen de config, no del usuario.
+        select = ", ".join(f'"{c}"' for c in columnas)
 
-        desde/hasta (opcionales, 'YYYY-MM-DD'): filtran por columna `date` DESPUÉS
-        de traer los datos. Útil para pedir p.ej. "todo hasta agosto" sin tocar
-        la query original.
-        """
-        query = f"""
-            SELECT date, time, instance, n1fe, n2cu, n3zn, n4mo, n5ech5, n6sc, n7ech7
-            FROM {self.table_name}
-            WHERE sample_id = :s_id
-            ORDER BY date ASC, time ASC
-        """
-        df = self.execute_query(query, params={"s_id": sample_id})
-        return _filtrar_por_fecha(df, desde, hasta)
+        condiciones = ["sample_id = :sample_id"]
+        params = {"sample_id": sample_id}
+        if desde is not None:
+            condiciones.append("date >= :desde")
+            params["desde"] = desde
+        if hasta is not None:
+            condiciones.append("date <= :hasta")
+            params["hasta"] = hasta
 
-    def get_assays(self, sample_id: int, desde: str | None = None, hasta: str | None = None):
-        """Trae solo los ensayos (leyes de laboratorio) + 'instance' como llave de fusión.
-
-        NO vuelve a traer las intensidades crudas (n1fe..n7ech7): esas ya están
-        en el CSV clusterizado (etapa 4), que sale de la MISMA tabla vía
-        get_intensity(). Traerlas también aquí duplicaba columnas al fusionar
-        (pandas las renombraba n6sc_x/n6sc_y) -- ver construir_dataset_supervisado().
-        """
-        query = f"""
-            SELECT date, time, instance, "pFe", "pCu", "pZn", "pMo", "pIns", "pSol"
-            FROM {self.table_name}
-            WHERE sample_id = :s_id
-            ORDER BY date ASC, time ASC
-        """
-        df = self.execute_query(query, params={"s_id": sample_id})
-        return _filtrar_por_fecha(df, desde, hasta)
-
-
-def _filtrar_por_fecha(df, desde, hasta):
-    if desde is None and hasta is None:
-        return df
-    fechas = df["date"].astype(str)
-    if desde is not None:
-        df = df[fechas >= desde]
-        fechas = df["date"].astype(str)
-    if hasta is not None:
-        df = df[fechas <= hasta]
-    return df.reset_index(drop=True)
+        query = (f'SELECT {select} FROM "{self.tabla}" '
+                 f'WHERE {" AND ".join(condiciones)} ORDER BY date, time')
+        with self.engine.connect() as conn:
+            return pd.read_sql(text(query), conn, params=params)

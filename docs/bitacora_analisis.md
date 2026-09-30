@@ -856,3 +856,88 @@ que no mide el sólido). Revisadas las dos fuentes:
 acceso hoy.** Falta ingresar ese dato a la base de datos (instrumentación
 u otra fuente) antes de poder medir si ayuda -- queda como hilo abierto,
 bloqueado por adquisición, no por análisis.
+
+---
+
+## 10. Sesión 2026-09-30 — revisión etapa por etapa (0-4) y grupos de mineral
+
+Pipeline reescrito desde la adquisición hasta el clustering, con datos hasta
+2026-09-30. ADR correspondientes en `Proyects/docs/decisiones.md` (4 entradas
+del 2026-09-30).
+
+### 10.1 Etapa 0 — tres fuentes, un crudo cada una
+`courier_bd.csv` (BD, 548 filas, 366 con ley), `courier_pi.csv` (PI
+`recorded`, 413,834 eventos, desde 2025-07-13), `composito_pi.csv` (2,601
+ensayos 12 h). Token PI por `PI_TOKEN`/`~/.pi_token`; pasarela 10.25.18.85:5173.
+Los tags `_296290_ConcFinal_*` son el `sample_id=24`: 125/125 muestras calzan,
+0 de ~2,700 de las otras 24 líneas.
+
+### 10.2 Lo que es el PI, medido
+- El courier da **una lectura del concentrado cada ~21 min** (mediana 1,251 s);
+  el PI la re-archiva cada 100 s (`ExcMax=100` en los 5 tags) → ~14 eventos
+  por lectura. No es sensor congelado.
+- 35,925 eventos todo-0 (analizador detenido, 177 días) y 41 todo -9999.
+- `n6sc` archivado 1-60 s aparte de los metales, concentrado en mar-jul 2026
+  (pico 6,399 filas en mayo). A veces `n1fe` llega 1 s antes que el resto.
+  La 1a reconstruye: 25,429 lecturas hasta el 30-sep, 0 con metales incompletos.
+
+### 10.3 BD ↔ PI
+Calce por valor de los 4 metales redondeados: **125/125** desde 2025-07-13
+(las 18 "perdidas" de mar-jul eran lecturas partidas por `n6sc`). Hora BD
+~6 min detrás del inicio de la lectura en el PI (p95 28 min). **3 filas de
+jun-2026 con la hora corrida exactamente 12 h** (AM/PM en la BD). 4 `instance`
+duplicadas = misma lectura registrada con y sin leyes. `instance` no sirve de llave.
+
+### 10.4 Leyes
+Ley en 0 = no analizada (pZn 72 en 2023-06..2025-10: n3zn igual con y sin
+pZn=0 → el Zn estaba ahí) → NaN. Ley sospechosa = |z| > 5 y su canal del
+courier no la respalda (|z| ≤ 2 o signo opuesto): 4 filas — 2023-02-24
+(pFe 4.16/pCu 0.43), 2025-04-18 (pMo 16.77), 2026-02-16 (pSol 295),
+2026-05-29 (pFe 39.18). Los pZn/pMo altos reales traen su canal alto.
+
+### 10.5 Etapa 1c — corte y anomalías
+Corte train ≤ 2026-05-31, producción ≥ 2026-09-01. IsolationForest (fracciones
+de cierre, contamination 2 %): train 2.0 %, test 9.2 % (junio 14.7 %,
+Mo/Zn altos), producción 5.9 %. El compósito no decide si es mineral o
+instrumento (corr fracción anómala vs Mo lab 0.06). `valida_ley`: 361/366.
+
+### 10.6 Etapa 2 — por qué se eliminó la ortogonalización
+Media por semestre de `n2cu_ortho`: +6,607 (2022H2) → −5,133 (2026H2), pCu
+24.8 → 22.9. R² metal~n6sc 0.01-0.22. Log-cocientes vs química del lab:
+Fe/Cu 0.73, Zn/Cu 0.86, Mo/Cu 0.95. GMM k=2 sobre intensidades absolutas
+(lo de V1): silhouette 0.19, log(ΣI) igual en ambos grupos (11.20/11.18) →
+**no se reproduce la separación por dilución de V1** con estos datos.
+
+### 10.7 Dilución, medida
+OLS `feature ~ química_lab + pSol` (n=343): lr_fe_cu t_pSol=+12.1
+(p10→p90 = +0.91 sd), lr_mo_cu −10.5 (−0.37 sd), lr_zn_cu −1.3 (sin efecto).
+Corrección con `dil = logSumI − EWMA(90 d, pasado)`: corr(dil, pSol)=0.50-0.55.
+Aplicada solo a Fe/Cu (b=+0.104): 0.91 → 0.73 sd, corr química 0.75 → 0.80.
+En Zn/Cu la corrección creaba un efecto (t=+3.3): no se aplica.
+
+### 10.8 Etapa 4 — k y grupos
+
+```
+k   silhouette  ARI mitades     (con corrección de dilución)
+2     0.290       0.958
+3     0.230       0.661
+4     0.249       0.856   <- elegido
+5     0.227       0.541
+```
+
+| grupo | BD (n) | compósito (n) | pSol | train | sept |
+|---|---|---|---|---|---|
+| Cu | pCu 25.64 (117) | cu 25.77 (186) | 23.6 | 37 % | 18 % |
+| Mo | pMo 2.41 (60) | mo 2.46 (207) | 21.5 | 30 % | 60 % |
+| Zn | pZn 0.40 (61) | — | 20.0 | 19 % | 18 % |
+| Fe | pFe 29.53, pCu 22.94 (123) | fe 28.77 (43) | 27.4 | 14 % | 5 % |
+
+Septiembre por semana (% Mo del grupo / Mo compósito): 44/2.13, 95/2.71,
+50/1.98, 53/1.73, 36/1.63 (hasta 30-sep 00:00: Cu 42→56 %). Racha mediana en
+un grupo: 2 lecturas (~40 min), p90 21. Artifact:
+https://claude.ai/artifact/LXzMFBmpFoooh5XwG88hfZ
+
+### 10.9 Abierto
+Etapa 5 (features y `valida_ley` nuevos, walk-forward), etapa 6,
+`run_pipeline.py` y notebook 10 rotos por la nueva interfaz de 1-4.
+Reconciliación con `tesis_ucspv2/` (etapa 2 y K=3 descritos allí ya no valen).

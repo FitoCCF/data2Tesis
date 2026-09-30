@@ -1,36 +1,30 @@
 #!/usr/bin/env python3
 # ============================================================
-# CELDA 3 — ESCALADO (corrección de asimetría + estandarización)
+# CELDA 3 — CORRECCIÓN DE DILUCIÓN + ESCALADO (ajustados solo con train)
 # ============================================================
-# Delega en src.pipeline.escalado.escalar().
+# A los 3 log-cocientes de la etapa 2 les resta la parte explicada por la
+# señal de dilución 'dil' (-> <feature>_dc) y los estandariza (-> <feature>_z).
+# Ambos pasos se ajustan con periodo == 'train' & valida y se aplican a todo.
+# Detalle y cifras en la cabecera de src/pipeline/escalado.py.
+#
+#   courier_features.csv -> courier_escalado.csv + models/scaler.joblib
+#
+#   pixi run python notebooks/03_escalado.py
 # ============================================================
 
 import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))  # independiente del CWD
 
-import pandas as pd
 import joblib
+import pandas as pd
 
-from src.pipeline.config import DATA_PROCESSED, MODELS_DIR, ART_POWER, ART_SCALER, FEATS_CLUSTER
-from src.pipeline.escalado import escalar
+from src.pipeline.config import FEATURES, ESCALADO, MODELS_DIR, ART_SCALER
+from src.pipeline.escalado import escalar, FEATS_ESCALADAS
 
-# --- 1. Cargar el dataset ortogonalizado (salida de la Celda 2) ---
-input_path = DATA_PROCESSED / 'intensidad_cobre_24_orthogonalized.csv'
-df = pd.read_csv(input_path)
-
-# --- 2. Escalar (etapa 3) ---
-X_scaled, power, scaler = escalar(df)
-
-df_scaled = df.copy()
-df_scaled[FEATS_CLUSTER] = X_scaled
-
-# --- 3. Guardar el dataset escalado ---
-output_path = DATA_PROCESSED / 'intensidad_cobre_24_scaled.csv'
-df_scaled.to_csv(output_path, index=False)
-
-# --- Guardar AMBOS transformadores (orden importa en tiempo real) ---
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-joblib.dump(power, MODELS_DIR / ART_POWER)
-joblib.dump(scaler, MODELS_DIR / ART_SCALER)
-
-print('Escalado listo:', output_path)
+df, artefacto = escalar(pd.read_csv(FEATURES, parse_dates=['ts']))
+df.to_csv(ESCALADO, index=False)
+joblib.dump(artefacto, MODELS_DIR / ART_SCALER)
+print(f"{FEATURES.name} -> {ESCALADO.name}")
+print("b_dilucion:", {k: round(v, 4) for k, v in artefacto['b_dilucion'].items()})
+print("media y desviación por período (lecturas válidas); train debe dar 0 y 1:")
+print(df.loc[df['valida']].groupby('periodo')[FEATS_ESCALADAS].agg(['mean', 'std']).round(3).to_string())

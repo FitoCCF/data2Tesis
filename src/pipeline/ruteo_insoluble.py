@@ -27,38 +27,25 @@
 import numpy as np
 import pandas as pd
 
-from .config import (DATA_RAW, RANDOM_STATE, TZ_COMPOSITO,
-                     TAGS_COMPOSITO, MAPA_LEY_COMPOSITO,
+from .config import (RANDOM_STATE, LAB_COMPOSITO, MAPA_LEY_COMPOSITO,
                      DIAS_VENTANA_MOVIL, PASO_REENTRENO_DIAS)
 from .features import features_regresion, columnas_regresion
-from .calibracion_composito import _construir_regresor, ventana_de_entrenamiento
+from .calibracion_composito import _construir_regresor, ventana_de_entrenamiento, cargar_composito
 
 
 # ============================================================
-# 1. CARGA DEL COMPÓSITO CRUDO (LABCOMPOSITO.csv, tags sin renombrar)
+# 1. CARGA DEL COMPÓSITO CON INSOLUBLE (composito_pi.csv)
 # ============================================================
 
 def cargar_composito_crudo(ruta=None) -> pd.DataFrame:
-    """Carga data/raw/LABCOMPOSITO.csv (export directo de PI, columnas =
-    tags 7100AIP10*MAN) y lo deja en el mismo formato que cargar_composito():
-    columnas ts (naive, hora local) + fe/cu/ins/mo.
-
-    Es un loader PARALELO a calibracion_composito.cargar_composito(), que
-    espera assay_lab_courier_pi.csv (ya renombrado, sin 'ins'). No se toca esa
-    función para no arriesgar el pipeline de recalibración ya validado
-    (notebooks/10) -- este módulo es de solo lectura sobre datos nuevos.
-    """
-    ruta = ruta or (DATA_RAW / "LABCOMPOSITO.csv")
-    lab = pd.read_csv(ruta)
-    lab = lab.rename(columns={"t": "ts", **TAGS_COMPOSITO})   # tags PI -> fe/cu/ins/mo
-
-    lab["ts"] = (pd.to_datetime(lab["ts"], utc=True)
-                 .dt.tz_convert(TZ_COMPOSITO)
-                 .dt.tz_localize(None))
-
-    cols = [c for c in list(MAPA_LEY_COMPOSITO.values()) + ["ins"] if c in lab.columns]
-    lab = lab[(lab[cols] > 0).all(axis=1)]                    # descarta filas con ceros (dato inválido)
-    return lab.sort_values("ts").reset_index(drop=True)
+    """Compósito de 12 h (data/raw/composito_pi.csv, etapa 0) con la columna
+    'ins'. Mismo formato que calibracion_composito.cargar_composito() -- ts
+    naive en hora local + fe/cu/ins/mo --, descartando además las filas con
+    insoluble en cero (dato inválido del lab)."""
+    lab = cargar_composito(ruta or LAB_COMPOSITO)
+    if "ins" in lab.columns:
+        lab = lab[lab["ins"] > 0]
+    return lab.reset_index(drop=True)
 
 
 def agregar_ins_lag(D: pd.DataFrame) -> pd.DataFrame:

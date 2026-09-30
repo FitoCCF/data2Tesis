@@ -1,53 +1,58 @@
 # ============================================================
-# src/acquisition/from_db.py — Adquisición: intensidades desde Postgres
+# src/acquisition/from_db.py — Adquisición desde Postgres (baja frecuencia)
 # ============================================================
-# Fuente REAL de las intensidades del courier de cobre (n1fe, n2cu, n3zn, n4mo,
-# n6sc): reemplaza a notebooks/00_getdata.ipynb de V1. El analizador expone una
-# API HTTP local (CLB) que otro proyecto (api2db.py en data4cdpv1_local) vuelca
-# a la tabla Postgres `works4cdp_assay`; este módulo solo lee esa tabla.
+# Fuente de las intensidades del courier Y de las leyes de laboratorio
+# (pFe..pSol): el analizador expone una API HTTP local (CLB) que otro proyecto
+# (api2db.py en data4cdpv1_local) vuelca a la tabla works4cdp_assay. Este
+# módulo solo lee esa tabla, vía src.database.ExtractorBD.
+#
+# Por defecto trae intensidades + leyes en un solo CSV (misma fila en la BD).
+# Qué columnas hay en cada grupo se define en config.COLS_BD.
 #
 # Ejecutable de forma independiente:
-#   python -m src.acquisition.from_db --sample-id 24 --hasta 2026-08-31 \
-#       --out data/raw/intensidad_cobre_db.csv
+#   python -m src.acquisition.from_db --hasta 2026-08-31            # -> data/raw/courier_bd.csv
+#   python -m src.acquisition.from_db --grupos leyes --out data/raw/leyes.csv
 # ============================================================
 
 import argparse
 
-from ..database import Extractor, DB_CONFIG_DEFAULT
-from ..pipeline.config import DATA_RAW
+import pandas as pd
+
+from ..database import ExtractorBD
+from ..pipeline.config import COLS_BD, SAMPLE_ID_COURIER, RAW_COURIER_BD
 
 
-def extraer_intensidades(sample_id: int, desde: str | None = None, hasta: str | None = None,
-                         db_config: dict | None = None):
-    """Extrae intensidades crudas de la BD, opcionalmente acotadas por fecha."""
-    extractor = Extractor(table_name="works4cdp_assay", **(db_config or DB_CONFIG_DEFAULT))
-    return extractor.get_intensity(sample_id, desde=desde, hasta=hasta)
+def extraer(sample_id: int = SAMPLE_ID_COURIER, grupos=("intensidades", "leyes"),
+            desde: str | None = None, hasta: str | None = None,
+            db_config: dict | None = None) -> pd.DataFrame:
+    """Llaves (date, time, instance) + los grupos de columnas pedidos, de un sample_id."""
+    return ExtractorBD(db_config).extraer(sample_id, grupos=grupos, desde=desde, hasta=hasta)
 
 
-def extraer_assays(sample_id: int, desde: str | None = None, hasta: str | None = None,
-                   db_config: dict | None = None):
-    """Extrae ensayos de laboratorio (leyes) de la BD, opcionalmente acotados por fecha."""
-    extractor = Extractor(table_name="works4cdp_assay", **(db_config or DB_CONFIG_DEFAULT))
-    return extractor.get_assays(sample_id, desde=desde, hasta=hasta)
+def resumen_leyes(df: pd.DataFrame) -> pd.DataFrame:
+    """Por cada ley presente: cuántas filas traen dato y cuántas vienen en cero.
+    Los ceros se reportan, no se tratan: decidir si son centinela es de la limpieza."""
+    leyes = [c for c in COLS_BD["leyes"] if c in df.columns]
+    return pd.DataFrame({"con_dato": df[leyes].notna().sum(),
+                         "en_cero": (df[leyes] == 0).sum()})
 
 
 def _main():
-    ap = argparse.ArgumentParser(description="Adquisición: extrae intensidades (o ensayos) de la BD Postgres")
-    ap.add_argument("--sample-id", type=int, default=24, help="sample_id del courier (24 = concentrado final cobre)")
-    ap.add_argument("--tabla", default="assays", choices=["assays", "intensidades"],
-                    help="'intensidades' trae solo canales; 'assays' trae canales + leyes de laboratorio")
+    ap = argparse.ArgumentParser(description="Adquisición desde la BD Postgres (works4cdp_assay)")
+    ap.add_argument("--sample-id", type=int, default=SAMPLE_ID_COURIER,
+                    help=f"sample_id a extraer ({SAMPLE_ID_COURIER} = Concentrado Colectivo)")
+    ap.add_argument("--grupos", nargs="+", default=["intensidades", "leyes"], choices=list(COLS_BD),
+                    help="Grupos de columnas a extraer (definidos en config.COLS_BD)")
     ap.add_argument("--desde", default=None, help="Fecha mínima 'YYYY-MM-DD' (inclusive), opcional")
     ap.add_argument("--hasta", default=None, help="Fecha máxima 'YYYY-MM-DD' (inclusive), opcional")
-    ap.add_argument("--out", default=str(DATA_RAW / "intensidad_cobre_db.csv"))
+    ap.add_argument("--out", default=str(RAW_COURIER_BD))
     args = ap.parse_args()
 
-    if args.tabla == "intensidades":
-        df = extraer_intensidades(args.sample_id, args.desde, args.hasta)
-    else:
-        df = extraer_assays(args.sample_id, args.desde, args.hasta)
-
+    df = extraer(args.sample_id, grupos=args.grupos, desde=args.desde, hasta=args.hasta)
     df.to_csv(args.out, index=False)
     print(f"Filas extraídas: {len(df)} (rango date: {df['date'].min()} .. {df['date'].max()})")
+    if "leyes" in args.grupos:
+        print(resumen_leyes(df).to_string())
     print(f"Guardado en: {args.out}")
 
 

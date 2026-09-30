@@ -1,139 +1,121 @@
 # ============================================================
-# src/acquisition/from_pi.py — Adquisición: intensidades del courier desde PI OSIsoft (vía gateway WSL)
+# src/acquisition/from_pi.py — Adquisición desde PI OSIsoft (vía pasarela PiGateway)
 # ============================================================
-# Envoltorio sobre pi_client.PiGateway (copiado tal cual desde
-# data4cdpv1_local/scripts/pi_client.py, autocontenido: solo requiere
-# `requests` + `pandas`). PiGateway habla HTTP/JSON con una pasarela (gw4Pi.exe)
-# que corre en Windows y expone el PI Data Archive, sin necesitar AF SDK ni
-# pythonnet en este entorno Linux/WSL.
+# Dos fuentes, cada una a su propio crudo en data/raw/ (etapa 0):
 #
-# ESTA es la ruta de extracción vigente para los canales del courier: se
-# extrae DESDE WSL, a través del gateway de data4cdpv1_local, usando los
-# mismos tags que ya se conocían por el script AF SDK original (ver también
-# from_pi_afsdk.py, que documenta la vía directa por AF SDK en Windows como
-# alternativa/referencia -misma fuente PI, mismos tags, transporte distinto-):
+#   B  courier_pi.csv     operación continua del courier: dato ARCHIVADO
+#                         (recorded), 5 canales, desde 2025-07-13.
+#   C  composito_pi.csv   compósito de laboratorio de 12 h (fe/cu/ins/mo).
 #
-#   _296290_ConcFinal_CanalCu_ABB -> n2cu
-#   _296290_ConcFinal_CanalFe_ABB -> n1fe
-#   _296290_ConcFinal_CanalMo_ABB -> n4mo
-#   _296290_ConcFinal_CanalSc_ABB -> n6sc
-#   _296290_ConcFinal_CanalZn_ABB -> n3zn
+# Ambas con recorded(), nunca interpolated(): interpolar a una grilla inventa
+# valores entre lecturas reales y borra la distinción entre un canal estable
+# y uno congelado. Se verificó (2026-09-30) que 108 de 126 muestras de la BD
+# aparecen con valores IDÉNTICOS en el recorded del PI; en una grilla
+# interpolada de 15 min esa correspondencia se pierde.
 #
-# El servidor PI real (tpi.southernperu.com.pe) lo resuelve el gateway del
-# lado Windows; el cliente de este módulo no necesita saberlo.
+# El crudo NO se limpia aquí: el courier sostiene cada lectura del
+# concentrado ~21 min y el PI la vuelve a archivar cada 100 s (ExcMax=100).
+# Colapsar esas repeticiones es de la etapa 1a (limpieza_fuentes.limpiar_pi).
 #
-# FECHA_INICIO_COURIER no se cambia salvo que se sepa lo que se hace: no hay
-# historia de estos tags antes de esa fecha.
+# Cliente: src/acquisition/pi_client.py, copia tal cual de
+# data4cdpv1_local/scripts/pi_client.py (fuente canónica; si cambia allá,
+# se vuelve a copiar). Host/puerto en config (PI_HOST, PI_PUERTO), o por
+# PI_GATEWAY_HOST / PI_GATEWAY_PORT. Token por PI_TOKEN o ~/.pi_token:
+# nunca en el código, el repo está en GitHub.
 #
-# La salida (índice = timestamp, columnas n1fe/n2cu/n3zn/n4mo/n6sc) ya está en
-# el formato que espera directamente la etapa 1 (src.pipeline.limpieza,
-# CANALES) para scorear producción sin pasar por merge_cobre_data.py. También
-# sigue funcionando como --cobre-24 de scripts/merge_cobre_data.py: su
-# `mapping_24` (que espera cu/fe/zn/mo/sc) simplemente no encuentra nada que
-# renombrar y sigue de largo, porque las columnas ya vienen con el nombre final.
-#
-# Ejecutable de forma independiente (desde WSL):
-#   export PI_GATEWAY_HOST=<ip_windows>   # si el autodescubrimiento no lo encuentra
-#   python -m src.acquisition.from_pi --out data/raw/Intensidades_nuevo.csv
-#   python -m src.acquisition.from_pi --hasta 2026-09-21 --out data/raw/Intensidades_sept.csv
-#
-# Para OTRAS variables de proceso (p.ej. espesadores/relaves, tags distintos
-# a los del courier), usar --tags explícito:
-#   python -m src.acquisition.from_pi --tags _294100_LIT_1011_ABB \
-#       --desde 2026-08-01 --hasta 2026-09-21 --out data/raw/pi_espesadores.csv
+# Ejecutable de forma independiente:
+#   PI_TOKEN=... python -m src.acquisition.from_pi courier --hasta 2026-08-31
+#   PI_TOKEN=... python -m src.acquisition.from_pi composito --desde 2022-01-01 --hasta 2026-08-31
 # ============================================================
 
 import argparse
+import os
+from pathlib import Path
 
 import pandas as pd
 
 from .pi_client import PiGateway
-from ..pipeline.config import DATA_RAW
+from ..pipeline.config import (PI_HOST, PI_PUERTO, TAGS_COURIER, FECHA_INICIO_COURIER,
+                               TAGS_COMPOSITO, RAW_COURIER_PI, RAW_COMPOSITO)
 
-# --- Fecha desde la que existen datos para los tags del courier en PI: NO cambiar ---
-FECHA_INICIO_COURIER = "2025-07-13 15:00:00"
-
-# Tag PI -> nombre de columna FINAL del pipeline (src.pipeline.config.CANALES),
-# no el nombre corto crudo -- así la salida sirve directo para la etapa 1 sin
-# pasar por merge_cobre_data.py, y ese script sigue funcionando igual (ver nota
-# arriba).
-TAGS_COURIER = {
-    "_296290_ConcFinal_CanalCu_ABB": "n2cu",
-    "_296290_ConcFinal_CanalFe_ABB": "n1fe",
-    "_296290_ConcFinal_CanalMo_ABB": "n4mo",
-    "_296290_ConcFinal_CanalSc_ABB": "n6sc",
-    "_296290_ConcFinal_CanalZn_ABB": "n3zn",
-}
+FECHA_INICIO_COMPOSITO = "2022-01-01"                     # antes de la historia del compósito: trae todo
 
 
-def extraer_courier(inicio: str = FECHA_INICIO_COURIER, fin: str | None = None,
-                    host: str | None = None, intervalo: str = "15m",
-                    metodo: str = "interpolated") -> pd.DataFrame:
-    """Extrae los 5 tags del courier vía el gateway y devuelve un DataFrame
-    ancho (índice = timestamp naive, columnas n1fe/n2cu/n3zn/n4mo/n6sc -- ya
-    con los nombres finales del pipeline), listo tanto para alimentar
-    directamente la etapa 1 (producción) como para scripts/merge_cobre_data.py
-    --cobre-24.
+def cargar_token() -> str:
+    """Token de la pasarela: PI_TOKEN o, si no, ~/.pi_token. Nunca se imprime."""
+    tok = os.environ.get("PI_TOKEN", "").strip()
+    if tok:
+        return tok
+    archivo = Path.home() / ".pi_token"
+    return archivo.read_text(encoding="utf-8").strip() if archivo.exists() else ""
 
-    metodo='interpolated' reproduce el mismo criterio que el script AF SDK
-    original (InterpolatedValues cada `intervalo`); 'recorded' trae el dato
-    crudo archivado (sin interpolar) si se prefiere para auditoría.
+
+def cliente() -> PiGateway:
+    """PiGateway con host/puerto de config (sobreescribibles por entorno) y el token."""
+    return PiGateway(host=os.environ.get("PI_GATEWAY_HOST", PI_HOST),
+                     puerto=int(os.environ.get("PI_GATEWAY_PORT", PI_PUERTO)),
+                     token=cargar_token())
+
+
+def _a_ancho(largo: pd.DataFrame, nombres: dict) -> pd.DataFrame:
+    """Largo (tag, t, value, good) -> ancho con columna 'ts' naive en hora local.
+
+    - Los valores con good=False (estado de error del PI) pasan a NaN: su
+      'value' no es numérico. No se descarta la fila.
+    - Cada tag se archiva con su propio timestamp (con o sin milisegundos);
+      se redondea a 1 s para que los canales de un mismo ciclo del courier
+      queden en la misma fila. Si dos eventos de un tag caen en el mismo
+      segundo, queda el último.
     """
-    fin = fin or "*"  # '*' = ahora, mismo significado que en pi_client
-    pi = PiGateway(host=host)
-    tags = list(TAGS_COURIER.keys())
-
-    if metodo == "interpolated":
-        df_largo = pi.interpolated(tags, inicio, fin, intervalo=intervalo)
-    else:
-        df_largo = pi.recorded(tags, inicio, fin)
-
-    ancho = pi.to_wide(df_largo)                     # pivote sin relleno, columnas = tags completos
-    ancho = ancho.rename(columns=TAGS_COURIER)        # tags -> n1fe/n2cu/n3zn/n4mo/n6sc
-    ancho = ancho.ffill().bfill()                     # mismo criterio de relleno que el script AF SDK original
-    if ancho.index.tz is not None:
-        ancho.index = ancho.index.tz_localize(None)   # timestamp naive, igual que Intensidades_*.csv existentes
-    ancho.index.name = None                           # PiGateway.to_wide() nombra el índice 't'; sin nombre =
-                                                        # columna en blanco al hacer to_csv() (mismo formato que
-                                                        # el script AF SDK original), que merge_cobre_data.py
-                                                        # reconoce como 'Unnamed: 0' al releerlo
-    return ancho
+    largo = largo.copy()
+    largo["value"] = pd.to_numeric(largo["value"], errors="coerce").where(largo["good"].astype(bool))
+    # to_datetime explícito: si algún bloque del troceado vino vacío, el concat
+    # deja 't' como object aunque los demás bloques traigan datetime con zona
+    largo["ts"] = (pd.to_datetime(largo["t"], utc=True).dt.tz_convert("America/Lima")
+                   .dt.tz_localize(None).dt.round("1s"))
+    ancho = largo.pivot_table(index="ts", columns="tag", values="value", aggfunc="last", dropna=False)
+    ancho = ancho.rename(columns=nombres)
+    ancho = ancho[[c for c in nombres.values() if c in ancho.columns]]
+    ancho.columns.name = None
+    return ancho.sort_index().reset_index()
 
 
-def extraer_generico(tags: list[str], inicio: str, fin: str, host: str | None = None) -> pd.DataFrame:
-    """Dato crudo archivado en PI para tags arbitrarios (p.ej. espesadores/relaves),
-    en formato ancho (pivote sin relleno). No aplica al courier -> usar extraer_courier()."""
-    pi = PiGateway(host=host)
-    df_largo = pi.recorded(tags, inicio, fin)
-    return pi.to_wide(df_largo)
+def extraer_courier(desde: str = FECHA_INICIO_COURIER, hasta: str | None = None,
+                    chunk_dias: float = 7) -> pd.DataFrame:
+    """Fuente B: dato archivado de los 5 canales del courier.
+    Columnas: ts (naive, hora local) + n1fe/n2cu/n3zn/n4mo/n6sc."""
+    hasta = hasta or pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    largo = cliente().recorded(list(TAGS_COURIER), desde, hasta, chunk_dias=chunk_dias)
+    return _a_ancho(largo, TAGS_COURIER)
+
+
+def extraer_composito(desde: str = FECHA_INICIO_COMPOSITO, hasta: str | None = None,
+                      chunk_dias: float = 90) -> pd.DataFrame:
+    """Fuente C: compósito de 12 h. Columnas: ts (naive, hora local) + fe/cu/ins/mo.
+    Los ceros del laboratorio se dejan: son de la limpieza."""
+    hasta = hasta or pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    largo = cliente().recorded(list(TAGS_COMPOSITO), desde, hasta, chunk_dias=chunk_dias)
+    return _a_ancho(largo, TAGS_COMPOSITO)
 
 
 def _main():
-    ap = argparse.ArgumentParser(
-        description="Adquisición: extrae intensidades del courier (o tags arbitrarios) desde PI OSIsoft vía gateway")
-    ap.add_argument("--tags", nargs="+", default=None,
-                    help="Tags PI arbitrarios (modo genérico). Si se omite, extrae los 5 tags del courier.")
-    ap.add_argument("--desde", default=FECHA_INICIO_COURIER,
-                    help=f"Inicio. Default: {FECHA_INICIO_COURIER} (inicio de historia de los tags del courier)")
-    ap.add_argument("--hasta", default=None, help="Fin, p.ej. '2026-09-21' o '*' (default: ahora)")
-    ap.add_argument("--intervalo", default="15m", help="Solo modo courier: intervalo de interpolación")
-    ap.add_argument("--metodo", choices=["interpolated", "recorded"], default="interpolated",
-                    help="Solo modo courier")
-    ap.add_argument("--host", default=None, help="IP del host Windows con la pasarela (si no, autodetecta)")
-    ap.add_argument("--out", default=str(DATA_RAW / "Intensidades_pi.csv"))
+    ap = argparse.ArgumentParser(description="Adquisición desde PI OSIsoft (courier o compósito)")
+    ap.add_argument("fuente", choices=["courier", "composito"])
+    ap.add_argument("--desde", default=None, help="Inicio 'YYYY-MM-DD[ HH:MM:SS]' (default: inicio de la historia)")
+    ap.add_argument("--hasta", default=None, help="Fin 'YYYY-MM-DD[ HH:MM:SS]' (default: ahora)")
+    ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    if args.tags:
-        ancho = extraer_generico(args.tags, args.desde, args.hasta or "*", host=args.host)
+    if args.fuente == "courier":
+        df = extraer_courier(args.desde or FECHA_INICIO_COURIER, args.hasta)
+        out = args.out or RAW_COURIER_PI
     else:
-        ancho = extraer_courier(args.desde, args.hasta, host=args.host,
-                                intervalo=args.intervalo, metodo=args.metodo)
+        df = extraer_composito(args.desde or FECHA_INICIO_COMPOSITO, args.hasta)
+        out = args.out or RAW_COMPOSITO
 
-    ancho.to_csv(args.out)
-    print(f"Filas: {len(ancho)}  |  columnas: {list(ancho.columns)}")
-    print(f"Guardado en: {args.out}")
-    if not args.tags:
-        print("Listo para: python scripts/merge_cobre_data.py --cobre-24", args.out)
+    df.to_csv(out, index=False)
+    print(f"Filas: {len(df)}  (rango {df['ts'].min()} .. {df['ts'].max()})")
+    print(f"Guardado en: {out}")
 
 
 if __name__ == "__main__":

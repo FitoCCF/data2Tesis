@@ -33,7 +33,7 @@ def construir_dataset_supervisado(df_assays: pd.DataFrame,
 
     Fusiona por 'instance' cuando está disponible en ambos lados (id de fila,
     no depende de cómo vengan formateadas date/time -- es lo que ya trae
-    get_assays() de la BD). Si df_assays no tiene 'instance' (p.ej. un CSV de
+    from_db.extraer() de la BD). Si df_assays no tiene 'instance' (p.ej. un CSV de
     ensayos exportado a mano sin esa columna), cae a (date, time) normalizados.
 
     Parámetros
@@ -97,7 +97,7 @@ def construir_dataset_supervisado(df_assays: pd.DataFrame,
 def _main():
     import argparse
 
-    from .config import DATA_PROCESSED
+    from .config import DATA_PROCESSED, SAMPLE_ID_COURIER
 
     ap = argparse.ArgumentParser(description="Fusión: intensidades clusterizadas + leyes de laboratorio")
     ap.add_argument("--clusterizado", default=str(DATA_PROCESSED / "intensidad_cobre_24_clusterizado.csv"),
@@ -106,7 +106,7 @@ def _main():
                     help="CSV ya exportado con los ensayos de laboratorio (date, time, pFe, pCu, pZn, pMo, ...)")
     ap.add_argument("--from-db", action="store_true",
                     help="En vez de --assays-csv, pide los ensayos en vivo a la BD (usa src.acquisition.from_db)")
-    ap.add_argument("--sample-id", type=int, default=24,
+    ap.add_argument("--sample-id", type=int, default=SAMPLE_ID_COURIER,
                     help="sample_id a extraer de la BD cuando se usa --from-db")
     ap.add_argument("--output-completo", default=str(DATA_PROCESSED / "intensidad_cobre_24_completo.csv"))
     ap.add_argument("--output-filtrado", default=str(DATA_PROCESSED / "intensidad_cobre_24_completo_filtrado.csv"))
@@ -118,10 +118,8 @@ def _main():
     df_cluster = pd.read_csv(args.clusterizado)
 
     if args.from_db:
-        from ..database import Extractor
-        from ..database.connection import DB_CONFIG_DEFAULT
-        extractor = Extractor(table_name="works4cdp_assay", **DB_CONFIG_DEFAULT)
-        df_assays = extractor.get_assays(args.sample_id)
+        from ..acquisition.from_db import extraer
+        df_assays = extraer(args.sample_id, grupos=("leyes",))
     else:
         df_assays = pd.read_csv(args.assays_csv)
 

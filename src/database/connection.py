@@ -1,13 +1,14 @@
-# src/database/connection.py
+# src/database/connection.py — Configuración y conexión a Postgres
 import os
-from sqlalchemy import create_engine, text  # Asegúrate de importar text
-import pandas as pd
 
-# Config por defecto, sobreescribible por variables de entorno.
-# NOTA: en V1 (data2Tesis) varios scripts (scripts/assay_int.py) tenían el
-# puerto hardcodeado en 5432, pero el contenedor postgres_db real publica en
-# 5433 (verificado con `docker ps`: 0.0.0.0:5433->5432/tcp). Se corrige aquí
-# y se centraliza para que ningún script vuelva a hardcodearlo mal.
+from sqlalchemy import create_engine
+
+# Config por defecto, sobreescribible por variables de entorno (DB_HOST,
+# DB_PORT, DB_USER, DB_PASSWORD, DB_NAME): así el mismo código corre en
+# desarrollo y en producción sin tocar nada. El puerto depende de la máquina:
+# el contenedor de data4cdpv1/docker-compose.yml publica 5432; en la máquina
+# donde se escribió V2 estaba publicado en 5433. Si no conecta, revisar
+# `docker ps` y exportar DB_PORT.
 DB_CONFIG_DEFAULT = {
     "user": os.environ.get("DB_USER", "myuser"),
     "password": os.environ.get("DB_PASSWORD", "mypassword"),
@@ -17,12 +18,7 @@ DB_CONFIG_DEFAULT = {
 }
 
 
-class DBManager:
-    def __init__(self, user, password, host, port, dbname):
-        self.url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
-        self.engine = create_engine(self.url)
-
-    def execute_query(self, query, params=None):
-        with self.engine.connect() as conn:
-            # Crucial: envolvemos 'query' en text()
-            return pd.read_sql(text(query), conn, params=params)
+def crear_engine(db_config: dict | None = None):
+    """Engine de SQLAlchemy para la config dada (o la de por defecto)."""
+    c = db_config or DB_CONFIG_DEFAULT
+    return create_engine(f"postgresql://{c['user']}:{c['password']}@{c['host']}:{c['port']}/{c['dbname']}")

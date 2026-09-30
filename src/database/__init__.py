@@ -1,4 +1,4 @@
-from .connection import DBManager, DB_CONFIG_DEFAULT
-from .extractor import Extractor
+from .connection import DB_CONFIG_DEFAULT, crear_engine
+from .extractor import ExtractorBD
 
-__all__ = ["DBManager", "DB_CONFIG_DEFAULT", "Extractor"]
+__all__ = ["DB_CONFIG_DEFAULT", "crear_engine", "ExtractorBD"]

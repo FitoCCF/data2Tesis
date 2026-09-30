@@ -43,7 +43,7 @@ from sklearn.pipeline import Pipeline                     # encadena escala + mo
 from sklearn.metrics import r2_score, mean_absolute_error  # métricas
 
 from .config import (CANALES, RANDOM_STATE,               # constantes centralizadas
-                     LAB_COMPOSITO, COL_TS_COMPOSITO, TZ_COMPOSITO,
+                     LAB_COMPOSITO, COL_TS_COMPOSITO,
                      VENTANA_COMPOSITO_H, MIN_BLOQUES_VENTANA, BLOQUE_RESAMPLE,
                      DIAS_VENTANA_MOVIL, PASO_REENTRENO_DIAS,
                      N_MUESTRAS_SESGO, SESGO_POR_TURNO,
@@ -56,22 +56,19 @@ from .features import features_regresion, columnas_regresion  # features invaria
 # ============================================================
 
 def cargar_composito(ruta=LAB_COMPOSITO) -> pd.DataFrame:
-    """Carga el compósito de 12 h exportado de PI (tags 7100AIP10*MAN).
+    """Carga el compósito de 12 h (data/raw/composito_pi.csv, etapa 0).
 
-    El export de PI trae el timestamp en la primera columna sin nombre y en
-    UTC-05:00; se normaliza a hora local naive para poder compararlo con los
-    timestamps de las intensidades, que vienen sin zona horaria.
+    El crudo trae 'ts' en hora local naive (la etapa 0 ya convirtió desde
+    UTC), comparable directamente con los timestamps de las intensidades.
 
     Retorna
     -------
     DataFrame con columnas: ts (naive, hora local) + las leyes disponibles.
     """
-    lab = pd.read_csv(ruta)                               # lee el CSV exportado de PI
-    lab = lab.rename(columns={COL_TS_COMPOSITO: "ts"})    # la primera columna sin nombre es el timestamp
+    lab = pd.read_csv(ruta)                               # lee el crudo de la etapa 0
+    lab = lab.rename(columns={COL_TS_COMPOSITO: "ts"})    # columna de timestamp -> 'ts'
 
-    lab["ts"] = (pd.to_datetime(lab["ts"], utc=True)      # parsea con zona horaria
-                 .dt.tz_convert(TZ_COMPOSITO)            # pasa a hora local de planta
-                 .dt.tz_localize(None))                  # quita la zona -> naive, comparable con las intensidades
+    lab["ts"] = pd.to_datetime(lab["ts"])                 # ya viene en hora local naive (etapa 0)
 
     leyes = [c for c in MAPA_LEY_COMPOSITO.values() if c in lab.columns]  # leyes realmente presentes
     lab = lab[(lab[leyes] > 0).all(axis=1)]               # descarta filas con ceros (dato inválido del lab)

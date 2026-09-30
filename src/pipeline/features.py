@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # ============================================================
-# src/pipeline/features.py — Features robustas a la deriva del instrumento
+# src/pipeline/features.py — Etapa 2: features robustas a la deriva del instrumento
 # ============================================================
+# Reemplaza a la antigua etapa 2 (ortogonalización contra n6sc). Ejecutable:
+#   python -m src.pipeline.features        # courier_limpio.csv -> courier_features.csv
+#
 # PROBLEMA QUE RESUELVE
 # --------------------
 # El analizador pierde cuentas con el tiempo (decaimiento de la fuente de rayos
@@ -36,7 +39,7 @@
 import numpy as np                                        # cálculo numérico
 import pandas as pd                                       # DataFrames
 
-from .config import METALES                               # los 4 canales de metal (sin n6sc)
+from .config import METALES, FEATS_CLUSTER, FEATS_REGRESION, DIL_HALFLIFE  # canales, features, dilución
 
 
 def features_cierre(df: pd.DataFrame) -> pd.DataFrame:
@@ -107,9 +110,82 @@ def features_regresion(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def columnas_regresion() -> list[str]:
-    """Nombres de las features de regresión, en orden fijo.
+    """Nombres de las features de regresión, en orden fijo (config.FEATS_REGRESION).
 
     Se usa para congelar el orden entre entrenamiento e inferencia: si el orden
     cambiara, el modelo recibiría las columnas permutadas y predeciría basura.
     """
-    return [f"{m}_f" for m in METALES] + ["logSumI"]      # mismo orden que features_regresion()
+    return list(FEATS_REGRESION)
+
+
+def features_cluster(df: pd.DataFrame) -> pd.DataFrame:
+    """Features del clustering: log-cocientes aditivos (alr) contra el cobre.
+
+        lr_fe_cu = log(n1fe/n2cu)   lr_zn_cu = log(n3zn/n2cu)   lr_mo_cu = log(n4mo/n2cu)
+
+    Por qué así y no las 4 fracciones de cierre:
+      - Una ganancia común del instrumento se cancela en el cociente, igual que
+        en las fracciones (invariantes a la deriva de la fuente).
+      - Las 4 fracciones suman 1: una es combinación lineal de las otras y la
+        covarianza de un GMM 'full' queda singular. Los 3 log-cocientes son
+        libres (coordenadas de Aitchison para datos composicionales).
+      - Las fracciones viven acotadas en (0, 1) y, para Zn y Mo, pegadas a 0;
+        el logaritmo las lleva a una escala donde una gaussiana es razonable.
+    Cu como denominador: es el canal más grande y estable (deriva de su
+    fracción 1.2%, ver cabecera).
+    """
+    cu = df["n2cu"].where(df["n2cu"] > 0)
+    salida = pd.DataFrame(index=df.index)
+    for col, metal in zip(FEATS_CLUSTER, ["n1fe", "n3zn", "n4mo"]):
+        salida[col] = np.log(df[metal].where(df[metal] > 0) / cu)
+    return salida
+
+
+def senal_dilucion(df: pd.DataFrame, halflife: str = DIL_HALFLIFE) -> pd.Series:
+    """dil = logSumI - EWMA(logSumI), con la EWMA calculada SOLO con lecturas
+    válidas ANTERIORES (causal: sirve igual en producción, sin fuga).
+
+    La EWMA por tiempo (no por nº de lecturas, el muestreo es irregular: cada
+    3 días en la BD, cada 21 min en el PI) sigue la deriva lenta de la fuente
+    de rayos X; lo que queda es la variación rápida de magnitud, que es la
+    dilución de la pulpa. Una fila sin historia previa queda con dil = 0.
+    Requiere df ordenado por ts y la columna 'valida' (etapa 1c).
+    """
+    log_sum = np.log(df[METALES].sum(axis=1).replace(0, np.nan))
+    ok = df["valida"] & log_sum.notna()
+    ewma = log_sum[ok].ewm(halflife=pd.Timedelta(halflife), times=df.loc[ok, "ts"]).mean()
+    base = ewma.shift(1).reindex(df.index).ffill()        # último nivel conocido ANTES de cada fila
+    # una fila no válida entre dos válidas toma la base de la válida anterior
+    # (ffill del valor ya desplazado), que también es pasado
+    return (log_sum - base).fillna(0.0).rename("dil")
+
+
+def agregar_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Etapa 2: agrega a la tabla las features de clustering, la señal de
+    dilución y las de regresión. No ajusta nada: no hay artefacto ni fuga."""
+    df = df.sort_values("ts").reset_index(drop=True)
+    return pd.concat([df, features_cluster(df), senal_dilucion(df),
+                      features_regresion(df)[columnas_regresion()]], axis=1)
+
+
+# ============================================================
+# CLI — etapa 2
+# ============================================================
+def _main():
+    import argparse
+    from .config import LIMPIO, FEATURES
+
+    ap = argparse.ArgumentParser(description="Etapa 2: features robustas a la deriva")
+    ap.add_argument("--input", default=str(LIMPIO))
+    ap.add_argument("--output", default=str(FEATURES))
+    args = ap.parse_args()
+
+    df = agregar_features(pd.read_csv(args.input, parse_dates=["ts"]))
+    df.to_csv(args.output, index=False)
+    feats = FEATS_CLUSTER + FEATS_REGRESION
+    print(f"{args.input} -> {args.output}  ({len(df)} filas)")
+    print(f"  features con NaN: {df[feats].isna().any(axis=1).sum()}")
+
+
+if __name__ == "__main__":
+    _main()
