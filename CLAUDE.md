@@ -23,7 +23,7 @@ circuito, orden escalado/ortogonalización) que no se sostuvieron.
   ni filtrar info industrial". Si hace falta subir un CSV o una figura
   puntual, `git add -f`, pero no por defecto.
 
-## Flujo del pipeline (revisado 2026-09-30, etapas 0-4)
+## Flujo del pipeline (revisado 2026-09-30, etapas 0-6, 8, 9)
 
 ```
 00_getdata            crudos por fuente: courier_bd / courier_pi (recorded) / composito_pi
@@ -33,11 +33,19 @@ circuito, orden escalado/ortogonalización) que no se sostuvieron.
 02_features           log-cocientes vs Cu (clustering) + fracciones y logSumI (regresión) + dil
 03_escalado           corrección de dilución (solo Fe/Cu) + StandardScaler, ajustados en train
 04_clusterizado       GMM K_GRUPOS=4 (Cu/Mo/Zn/Fe), diagnóstico de k, caracterización vs lab
+05_modelos_locales    walk-forward (split_purgado) + control aleatorio -> bundle (hoy: todo global)
+06_inferencia_hibrida <ley>_est por lectura -> courier_estimado.csv
+08_evaluacion_lab...  vs compósito 12 h, sin/con Kalman -> data/final/eval_composito*.csv, fig_08_*
+09_evaluacion_vs_lab  vs muestras BD (OOF histórico + test) -> eval_bd_metricas.csv, fig_09_*
 ```
 
-Todo lo que se ajusta usa solo `periodo == 'train'`. Ninguna etapa borra
-filas por una bandera: marca. Etapas 5-6, `run_pipeline.py` y el notebook 10
-todavía usan la interfaz antigua (columnas `_ortho`, `limpiar()` viejo).
+`pixi run test` corre los 18 tests de `split_purgado`. La evaluación vive en
+`src/evaluacion/` (`evaluar.py` + `figuras.py`); la 9 lee lo que escribe la 8.
+
+Todo lo que se ajusta usa solo `periodo == 'train'` (también el `q` del
+Kalman). Ninguna etapa borra filas por una bandera: marca. `run_pipeline.py`,
+el notebook 10 y `scripts/validaciones_estadisticas.py` todavía usan la
+interfaz antigua (ortogonalización, `EstimadorHibrido`).
 
 ## Trampas ya encontradas
 
@@ -54,13 +62,15 @@ todavía usan la interfaz antigua (columnas `_ortho`, `limpiar()` viejo).
   `sample_id=10` "Concentrado Final" (equipo 1, otro courier). Verificado por
   valor el 2026-09-30: 126/126 muestras del 24 calzan con el PI; 0 de ~2,700
   de las otras 24 líneas de muestreo.
-- **La etapa 5 (`modelos.py`, modelos locales por cluster) usa
-  `KFold(shuffle=True)` sin corregir** — el mismo problema que ya se arregló
-  en `data2Tesis` (`split_purgado`, walk-forward con purga y embargo) nunca
-  se propagó aquí. Con el tamaño de muestra actual (~307-314), cualquier
-  comparación de R² entre dos clusterings *necesita* un control aleatorio
-  de partición (mismo tamaño de grupo, sin información real) o el resultado
-  probablemente es ruido, no señal. Seis pruebas distintas lo confirmaron.
+- **Cualquier comparación de R² entre particiones necesita el control
+  aleatorio** (mismo tamaño de grupo, sin información real): con ~340
+  muestras casi cualquier reparto parece mejorar. Seis pruebas de §8-9 y la
+  propia etapa 5 lo confirmaron; por eso el control es parte de la regla de
+  ruteo, y hoy ningún local la pasa.
+- **BD y compósito no son la misma referencia en Cu:** la BD lee 1.2
+  puntos menos que el compósito de su ventana (corr 0.48; Fe −0.18/0.61, Mo
+  +0.07/0.92). Una métrica de Cu o Fe cambia según contra cuál se mida, y
+  el Kalman (que aprende del compósito) empeora Cu contra la BD.
 - **La ortogonalización contra `n6sc` se eliminó (2026-09-30).** Sus
   residuos arrastraban la deriva del instrumento (`n2cu_ortho` de +6,600 en
   2022H2 a -5,100 en 2026H2 con pCu casi constante). La etapa 2 es ahora

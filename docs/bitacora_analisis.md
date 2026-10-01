@@ -941,3 +941,39 @@ https://claude.ai/artifact/LXzMFBmpFoooh5XwG88hfZ
 Etapa 5 (features y `valida_ley` nuevos, walk-forward), etapa 6,
 `run_pipeline.py` y notebook 10 rotos por la nueva interfaz de 1-4.
 Reconciliación con `tesis_ucspv2/` (etapa 2 y K=3 descritos allí ya no valen).
+
+## 11. Sesión 2026-09-30 (2) — etapas 5, 6, 8 y 9: modelo vs laboratorio, sin y con Kalman
+
+Cierra lo abierto en §10.9 salvo el notebook 10 y `run_pipeline.py`.
+Commits `64ad2c3` y `8384dc7`. ADR en `../docs/decisiones.md` (2026-09-30).
+
+### 11.1 Etapa 5 — walk-forward y control aleatorio
+342 muestras de train con `valida_ley`; 5 folds de 57 (`split_purgado`, purga
+y embargo 12 h: 0 filas purgadas, 1 intervalo < 12 h). N por grupo: Cu 112,
+Fe 123, Mo 54, Zn 53 (pZn 83/101/45/41). Mo y Zn: global por N < 60. Cu y
+Fe: ningún local supera al p95 de 200 particiones aleatorias. **Todo global.**
+R² global fuera de fold (285 puntos): Fe −0.17, Cu 0.55, Mo 0.78, Zn 0.90
+(215). Fe sobreestima +0.98 de forma sostenida: el Fe de la BD baja desde 2024.
+
+### 11.2 Etapas 8-9 — contra el laboratorio
+Compósito, fuera de muestra (jun-sep, n=209, sin anomalías); `q` elegido en train:
+
+| ley | q | corr mod → kal | R² mod → kal | MAE mod → kal | sesgo mod → kal |
+|---|---|---|---|---|---|
+| Fe | 0.01 | 0.525 → 0.524 | −0.211 → 0.189 | 1.114 → 0.913 | −0.85 → −0.15 |
+| Cu | 0.005 | 0.564 → 0.528 | 0.038 → 0.227 | 1.426 → 1.301 | −0.91 → −0.06 |
+| Mo | 0.002 | 0.913 → 0.914 | 0.814 → 0.832 | 0.252 → 0.220 | −0.10 → +0.03 |
+
+Con anomalías: casi igual (Mo corr 0.928). BD test (n=18): Fe R² 0.25 → 0.48,
+Mo 0.63 → 0.64, **Cu 0.52 → 0.24**, Zn 0.83 (sin Kalman).
+
+### 11.3 BD vs compósito
+351 muestras de la BD contra el compósito de su ventana (07:30 cubre
+01:30-13:30): BD − compósito Cu −1.23 (corr 0.48; por año −0.97/−1.20/−1.84/−0.74),
+Fe −0.18 (0.61), Mo +0.07 (0.92). Explica el signo opuesto del sesgo del
+modelo contra cada referencia y por qué el Kalman empeora Cu contra la BD.
+
+### 11.4 Abierto
+Referencia oficial para Cu (BD o compósito). Notebook 10 (recalibración de Fe
+contra el compósito) y `run_pipeline.py` con la interfaz nueva. Inferencia en
+línea. Sensibilidad del GMM por fold.
