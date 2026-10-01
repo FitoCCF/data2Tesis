@@ -114,6 +114,19 @@ TARGETS = ["pFe", "pCu", "pMo", "pZn"]                    # leyes de laboratorio
 MODELO_POR_TARGET = {"pFe": "Ridge", "pCu": "SVR",        # familia de modelo por ley
                      "pMo": "Ridge", "pZn": "PLS"}
 
+# --- Etapa 5: validación walk-forward y regla de ruteo (src/pipeline/modelos.py) ---
+# Reemplaza a KFold(shuffle=True), que filtraba información en una serie de
+# tiempo. Folds calculados UNA vez sobre las muestras de train con valida_ley y
+# compartidos por todas las leyes, el modelo global y los locales.
+N_SPLITS = 5                  # folds walk-forward (ventana expansiva)
+PURGA = "12h"                 # tolerancia de emparejamiento 6 h x 2 (ADR 2026-09-01); medido: purga 0 filas
+EMBARGO = "12h"
+N_MIN_LOCAL = 60              # sin modelo local por debajo: bloque de prueba < 10 muestras (ADR 2026-09-01)
+MIN_TRAIN_FOLD_LOCAL = 10     # un fold local con menos train no predice; la celda se evalúa sin esos puntos
+N_CONTROL = 200               # particiones aleatorias del control (mismos tamaños de grupo)
+PCTL_CONTROL = 95             # el local debe superar este percentil de la mejora del control para rutearse
+                              # (bitácora §8-9: seis "mejoras" por partición no le ganaron al azar)
+
 # --- Semilla global para reproducibilidad ---
 RANDOM_STATE = 42                                         # fija el azar en todo el pipeline
 
