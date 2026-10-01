@@ -105,6 +105,7 @@ DIL_HALFLIFE = "90D"
 DIL_CORREGIR = ["lr_fe_cu"]
 ESCALADO = DATA_PROCESSED / "courier_escalado.csv"       # salida de la etapa 3 (+ columnas <feature>_z)
 CLUSTERIZADO = DATA_PROCESSED / "courier_clusterizado.csv"  # salida de la etapa 4
+ESTIMADO = DATA_PROCESSED / "courier_estimado.csv"       # salida de la etapa 6 (+ columnas <ley>_est)
 K_GRUPOS = 4                  # grupos del GMM (etapa 4). Elegido por diagnostico_k(): silhouette 0.249 y
                               # ARI 0.856, máximo local para k>=3, y cada grupo sobre-representa un elemento
                               # distinto confirmado por laboratorio. k=2 es la alternativa más estable (ARI 0.96).

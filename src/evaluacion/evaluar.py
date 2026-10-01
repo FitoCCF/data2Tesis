@@ -1,138 +1,128 @@
 # ============================================================
-# src/evaluacion/evaluar.py — Evaluación vs laboratorio químico REAL
+# src/evaluacion/evaluar.py — Evaluación de la estimación vs laboratorio químico
 # ============================================================
-# Unifica las celdas 08 y 09 de V1 en una sola función parametrizable. Corre la
-# inferencia sobre las intensidades de un período, promedia en ventanas de 12 h
-# CENTRADAS en el timestamp del ensayo, excluye ventanas con fuga de datos y
-# calcula R2, MAE y correlación contra el laboratorio real.
+# Etapas 8 y 9. Toma la salida de la etapa 6 (courier_estimado.csv) y la
+# compara contra las dos referencias de laboratorio:
 #
-# Ejecutable de forma independiente:
-#   python -m src.evaluacion.evaluar --intensidades data/processed/intensidades_cobre.csv \
-#       --lab data/raw/assay_lab_raw.csv --calibracion data/processed/intensidad_cobre_24_completo_filtrado.csv \
-#       --desde 2025-01-01 --hasta 2026-01-01
+#   compósito de 12 h (etapa 8): media de la estimación en la ventana CENTRADA
+#       [t-6h, t+6h] del corte, en bloques de 30 min (autocorrelación 0.907 a
+#       lag-1) con un mínimo de 8 bloques. Mismo criterio validado en
+#       calibracion_composito.alinear_con_composito. Fe, Cu y Mo (sin Zn).
+#   muestras puntuales de la BD (etapa 9): la estimación de la lectura exacta
+#       de cada muestra (calce por valor de la etapa 1b). Las 4 leyes.
+#
+# Corrector de sesgo por Kalman: mismo protocolo causal del backtest del
+# 2026-09-29 (cada compósito se corrige con los anteriores y recién después
+# se revela su valor). q_por_dia se elige SOLO con compósitos del periodo train
+# y se aplica fijo a test y producción.
 # ============================================================
 
 import numpy as np                                         # cálculo numérico
 import pandas as pd                                         # DataFrames
 from sklearn.metrics import r2_score, mean_absolute_error   # métricas
 
-from ..pipeline.config import CANALES                       # canales de intensidad
-from ..pipeline.inferencia import EstimadorHibrido          # estimador (import normal, sin exec)
+from ..pipeline.config import (VENTANA_COMPOSITO_H, MIN_BLOQUES_VENTANA, BLOQUE_RESAMPLE,
+                               FECHA_CORTE_TRAIN, FECHA_INICIO_PRODUCCION)
+from ..pipeline.limpieza import fin_de_train
+from ..pipeline.corrector_kalman import CorrectorKalman
 
-MESES = {"ene": "01", "feb": "02", "mar": "03", "abr": "04", "may": "05", "jun": "06",
-         "jul": "07", "ago": "08", "sep": "09", "oct": "10", "nov": "11", "dic": "12"}
-
-
-def parse_fecha_es(s: str) -> pd.Timestamp:
-    """Convierte '01-ene-24 06:00:00' (fecha en español) a Timestamp."""
-    d, t = s.split(" ")                                    # separa fecha y hora
-    dd, mm, yy = d.split("-")                               # día, mes (texto), año
-    return pd.Timestamp(f"20{yy}-{MESES[mm]}-{dd} {t}")     # arma el timestamp
+LEYES_COMPOSITO = {"pFe": "fe", "pCu": "cu", "pMo": "mo"}   # ley del modelo -> columna del compósito
+Q_GRID = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]      # barrido de q_por_dia (r = 1 fijo)
 
 
-def cargar_lab_real(ruta: str) -> pd.DataFrame:
-    """Carga el laboratorio real (assay_lab_raw.csv) y deja 1 valor por 12 h."""
-    lab = pd.read_csv(ruta)                                 # lee el CSV
-    lab["ts"] = lab["date_time"].apply(parse_fecha_es)      # parsea la fecha en español
-    lab = lab.drop_duplicates(subset=["Cu", "Mo", "Fe"], keep="first")  # 1 assay por 12 h
-    return lab.sort_values("ts")                            # ordenado por tiempo
+def periodo_de(ts: pd.Series) -> pd.Series:
+    """Mismo corte que la etapa 1c: train hasta el día de corte entero."""
+    return pd.Series(np.select([ts < fin_de_train(FECHA_CORTE_TRAIN),
+                                ts < pd.Timestamp(FECHA_INICIO_PRODUCCION)],
+                               ["train", "test"], "produccion"), index=ts.index)
 
 
-def evaluar_periodo(inten: pd.DataFrame, lab: pd.DataFrame, cal: pd.DataFrame,
-                    fecha_ini: str, fecha_fin: str, estimador=None) -> pd.DataFrame:
-    """Evalúa el pipeline en un período contra el laboratorio real.
+def mascara_lecturas(df: pd.DataFrame, con_anomalias: bool = False) -> pd.Series:
+    """Lecturas continuas del courier (PI) usables para promediar.
+    Siempre fuera: congeladas y sostenidas. Las anomalías del IsolationForest
+    se excluyen salvo con_anomalias=True (la etapa 1c no permite decidir si
+    son mineral o instrumento: se reporta con y sin)."""
+    m = (df["fuente"] != "bd") & ~df["congelada"] & ~df["sostenida"]
+    return m if con_anomalias else m & ~df["anomalia"]
 
-    Parámetros
-    ----------
-    inten : intensidades del stream (con columnas date, time y los canales).
-    lab : laboratorio real ya cargado con columna 'ts' (ver cargar_lab_real).
-    cal : dataset de calibración (para detectar fuga).
-    fecha_ini, fecha_fin : límites del período (strings 'YYYY-MM-DD').
-    estimador : EstimadorHibrido ya instanciado; si None, se crea uno.
 
-    Retorna
-    -------
-    M : DataFrame con las ventanas comparadas (estimado vs real por elemento).
-    """
-    est = estimador or EstimadorHibrido()                   # reutiliza o crea el estimador
+def alinear_composito(est: pd.DataFrame, comp: pd.DataFrame, mascara: pd.Series) -> pd.DataFrame:
+    """Una fila por compósito: media de la estimación en su ventana centrada +
+    ley del compósito. Descarta ventanas con menos de MIN_BLOQUES_VENTANA."""
+    cols = [f"{l}_est" for l in LEYES_COMPOSITO]
+    bloques = (est.loc[mascara].set_index("ts")[cols]
+               .resample(BLOQUE_RESAMPLE).mean().dropna())  # submuestreo a 30 min
+    media_h = pd.Timedelta(hours=VENTANA_COMPOSITO_H / 2)
+    comp = comp[(comp["ts"] >= bloques.index.min()) & (comp["ts"] <= bloques.index.max())]
 
-    # --- Filtrar intensidades al período y marcar fuga (muestras de calibración) ---
-    inten = inten.copy()                                    # no mutar el original
-    inten["ts"] = pd.to_datetime(inten["date"].astype(str) + " " + inten["time"])  # timestamp
-    inten = inten[(inten["ts"] >= fecha_ini) & (inten["ts"] < fecha_fin)]          # recorta período
-    cal_keys = set(map(tuple, cal[CANALES].round(3).values))                       # firmas de calibración
-    inten = inten.assign(es_calib=[tuple(np.round(r, 3)) in cal_keys               # marca fuga
-                                   for r in inten[CANALES].values])
-
-    # --- Inferencia sobre cada lectura ---
-    filas = []                                              # estimaciones por lectura
-    for _, f in inten.iterrows():                           # recorre las lecturas
-        res = est.predecir({c: f[c] for c in CANALES})      # estima
-        if res["leyes"]:                                    # si pasó la compuerta de calidad
-            filas.append({"ts": f["ts"], "es_calib": f["es_calib"], **res["leyes"]})  # guarda
-    pred = pd.DataFrame(filas).set_index("ts").sort_index()  # serie temporal de estimaciones
-    pred = pred[~pred["es_calib"]]                          # excluye lecturas de calibración (fuga)
-
-    # --- Alinear en ventanas de 12 h CENTRADAS en el timestamp del lab ---
-    lab_p = lab[(lab["ts"] >= fecha_ini) & (lab["ts"] < fecha_fin)]  # lab del período
-    rows = []                                                # comparaciones
-    for _, L in lab_p.iterrows():                            # por cada ensayo de lab
-        c = L["ts"]                                          # centro de la ventana (lag 0)
-        w = pred[(pred.index > c - pd.Timedelta("6h")) &     # ventana +-6h
-                 (pred.index <= c + pd.Timedelta("6h"))]
-        if len(w) == 0:                                      # sin intensidades en la ventana
+    filas = []
+    for _, c in comp.iterrows():
+        v = bloques.loc[c["ts"] - media_h: c["ts"] + media_h]   # ventana centrada
+        if len(v) < MIN_BLOQUES_VENTANA:
             continue
-        rows.append({"fecha": c,                             # promedio estimado vs ley real
-                     "pCu": w["pCu"].mean(), "Cu": L["Cu"],
-                     "pFe": w["pFe"].mean(), "Fe": L["Fe"],
-                     "pMo": w["pMo"].mean(), "Mo": L["Mo"]})
-    return pd.DataFrame(rows)                                # tabla de comparación
+        fila = {"ts": c["ts"], "turno": "dia" if c["ts"].hour < 12 else "noche", "n_bloques": len(v)}
+        fila.update(v.mean().to_dict())                         # estimación media de la ventana
+        fila.update({ley: c[col] for ley, col in LEYES_COMPOSITO.items()})  # ley del compósito
+        filas.append(fila)
+    A = pd.DataFrame(filas).sort_values("ts").reset_index(drop=True)
+    A["periodo"] = periodo_de(A["ts"])
+    return A
 
 
-def reportar_metricas(M: pd.DataFrame) -> pd.DataFrame:
-    """Calcula R2, MAE y correlación por elemento y las imprime."""
-    filas = []                                               # una fila por elemento
-    for est_c, lab_c, nombre in [("pCu", "Cu", "Cu"), ("pFe", "Fe", "Fe"), ("pMo", "Mo", "Mo")]:
-        filas.append({"elemento": nombre,
-                      "R2": r2_score(M[lab_c], M[est_c]),              # R2
-                      "MAE": mean_absolute_error(M[lab_c], M[est_c]),  # error absoluto medio
-                      "corr": M[est_c].corr(M[lab_c])})                # correlación
-    tabla = pd.DataFrame(filas)                              # tabla de métricas
-    print(tabla.round(3).to_string(index=False))            # imprime
-    return tabla                                             # devuelve la tabla
+def kalman_serie(A: pd.DataFrame, ley: str, q: float) -> tuple[pd.Series, CorrectorKalman]:
+    """Corrige '<ley>_est' compósito a compósito, en orden temporal: primero se
+    corrige con el sesgo de los anteriores, después se revela el real."""
+    k = CorrectorKalman(q_por_dia=q)
+    out = np.full(len(A), np.nan)
+    for i, f in enumerate(A.itertuples(index=False)):
+        cruda, real = getattr(f, f"{ley}_est"), getattr(f, ley)
+        out[i] = k.corregir(ley, cruda, f.turno)            # sesgo conocido ANTES de este compósito
+        if not np.isnan(real):
+            k.actualizar(ley, cruda, real, f.turno, ts=f.ts)  # se revela después
+    return pd.Series(out, index=A.index), k
 
 
-# ============================================================
-# CLI — ejecución independiente de la etapa
-# ============================================================
-def _main():
-    import argparse
-
-    from ..pipeline.config import DATA_PROCESSED, DATA_RAW
-
-    ap = argparse.ArgumentParser(description="Evaluación del pipeline vs laboratorio real")
-    ap.add_argument("--intensidades", default=str(DATA_PROCESSED / "intensidades_cobre.csv"))
-    ap.add_argument("--lab", default=str(DATA_RAW / "assay_lab_raw.csv"))
-    ap.add_argument("--calibracion", default=str(DATA_PROCESSED / "intensidad_cobre_24_completo_filtrado.csv"))
-    ap.add_argument("--desde", required=True, help="Fecha inicio 'YYYY-MM-DD'")
-    ap.add_argument("--hasta", required=True, help="Fecha fin 'YYYY-MM-DD'")
-    ap.add_argument("--output", default=str(DATA_PROCESSED / "comparacion_vs_lab_real.csv"))
-    args = ap.parse_args()
-
-    import pandas as pd
-    inten = pd.read_csv(args.intensidades)
-    lab = cargar_lab_real(args.lab)
-    cal = pd.read_csv(args.calibracion)
-
-    M = evaluar_periodo(inten, lab, cal, args.desde, args.hasta)
-    if len(M) == 0:
-        print("Sin ventanas comparables en el período indicado.")
-        return
-
-    reportar_metricas(M)
-    M.to_csv(args.output, index=False)
-    print(f"\nComparación guardada en: {args.output}")
+def elegir_q(A: pd.DataFrame, ley: str, grid=Q_GRID) -> tuple[float, pd.DataFrame]:
+    """q_por_dia con mejor R² sobre los compósitos de train (nunca test)."""
+    tr = (A["periodo"] == "train") & A[ley].notna()
+    filas = []
+    for q in grid:
+        corr, _ = kalman_serie(A, ley, q)
+        filas.append({"q": q, **metricas(A.loc[tr, ley], corr[tr])})
+    T = pd.DataFrame(filas)
+    return float(T.loc[T["R2"].idxmax(), "q"]), T
 
 
-if __name__ == "__main__":
-    _main()
+def metricas(y, p) -> dict:
+    """n, corr, R², MAE, sesgo (est - lab) y pendiente de est vs lab."""
+    y, p = np.asarray(y, float), np.asarray(p, float)
+    ok = ~np.isnan(y) & ~np.isnan(p)
+    y, p = y[ok], p[ok]
+    if len(y) < 3:
+        return {"n": len(y)}
+    return {"n": len(y), "corr": float(np.corrcoef(y, p)[0, 1]), "R2": r2_score(y, p),
+            "MAE": mean_absolute_error(y, p), "sesgo": float(np.mean(p - y)),
+            "pendiente": float(np.polyfit(y, p, 1)[0])}
+
+
+def kalman_en_instantes(A: pd.DataFrame, ley: str, q: float, est: pd.DataFrame) -> np.ndarray:
+    """Corrige estimaciones puntuales (muestras de la BD) con el sesgo que el
+    Kalman tenía en ese instante: solo compósitos cuya ventana ya cerró
+    (ts + 6 h <= instante). El turno es el del compósito cuya ventana contiene
+    la muestra (07:30 -> 'dia', 19:30 -> 'noche')."""
+    k = CorrectorKalman(q_por_dia=q)
+    media_h = pd.Timedelta(hours=VENTANA_COMPOSITO_H / 2)
+    comp = A.sort_values("ts").reset_index(drop=True)
+    out = np.full(len(est), np.nan)
+    j = 0
+    for i in np.argsort(est["ts"].to_numpy()):            # muestras en orden temporal
+        t = est["ts"].iloc[i]
+        while j < len(comp) and comp["ts"].iloc[j] + media_h <= t:   # revela compósitos ya cerrados
+            f = comp.iloc[j]
+            if not np.isnan(f[ley]):
+                k.actualizar(ley, f[f"{ley}_est"], f[ley], f["turno"], ts=f["ts"])
+            j += 1
+        centro = (t - pd.Timedelta(hours=1, minutes=30)).floor("12h") + pd.Timedelta(hours=7, minutes=30)
+        turno = "dia" if centro.hour < 12 else "noche"    # compósito al que pertenece la muestra
+        out[i] = k.corregir(ley, est[f"{ley}_est"].iloc[i], turno)
+    return out

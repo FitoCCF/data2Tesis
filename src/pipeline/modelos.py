@@ -104,6 +104,7 @@ def entrenar_modelos_locales(df: pd.DataFrame, n_control: int = N_CONTROL) -> di
     rng = np.random.default_rng(RANDOM_STATE)             # azar reproducible del control
 
     filas, tabla_ruteo = [], {}                           # validación por celda, decisiones
+    oof = s[["ts", "grupo"] + TARGETS].copy()             # predicciones fuera de fold (trazabilidad, etapa 9)
     modelos_globales, modelos_locales = {}, {}            # modelos finales
 
     for tgt in TARGETS:                                   # por cada ley
@@ -112,6 +113,7 @@ def entrenar_modelos_locales(df: pd.DataFrame, n_control: int = N_CONTROL) -> di
         con_ley = ~np.isnan(y)                            # dropna POR ELEMENTO, sin tocar los folds
 
         pred_g = _oof(X, y, folds, familia, con_ley)      # global fuera de fold
+        oof[f"{tgt}_oof"] = pred_g
         modelos_globales[tgt] = _construir_modelo(familia).fit(X[con_ley], y[con_ley])  # ajuste final
 
         # Control: grupos al azar con los mismos tamaños, mismo procedimiento.
@@ -172,6 +174,7 @@ def entrenar_modelos_locales(df: pd.DataFrame, n_control: int = N_CONTROL) -> di
         "tabla_ruteo": tabla_ruteo,                       # decisiones local/global
         "validacion": pd.DataFrame(filas),                # trazabilidad: N, R², MAE, control por celda
         "folds": folds,                                   # índices sobre conjunto_supervisado(df)
+        "oof": oof,                                       # ts, grupo, ley real y '<ley>_oof' (modelo global)
         "parametros": {"n_splits": N_SPLITS, "purga": PURGA, "embargo": EMBARGO,
                        "n_min_local": N_MIN_LOCAL, "min_train_fold_local": MIN_TRAIN_FOLD_LOCAL,
                        "n_control": n_control, "pctl_control": PCTL_CONTROL,

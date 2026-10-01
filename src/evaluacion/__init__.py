@@ -1,2 +1,1 @@
-# Paquete evaluacion: métricas y comparación contra laboratorio real.
-from .evaluar import evaluar_periodo, reportar_metricas, cargar_lab_real
+# src/evaluacion — etapas 8 y 9: estimación vs laboratorio químico

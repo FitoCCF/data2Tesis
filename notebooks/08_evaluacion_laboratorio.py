@@ -1,80 +1,76 @@
 #!/usr/bin/env python3
 # ============================================================
-# CELDA 8 — EVALUACIÓN CONTRA LABORATORIO DE ALTA FRECUENCIA
+# CELDA 8 — MODELO vs COMPÓSITO DE LABORATORIO (12 h), SIN Y CON KALMAN
 # ============================================================
-# Evaluación DEFENDIBLE del pipeline completo sobre datos fuera de muestra:
-# corre la inferencia sobre las intensidades del período de test, promedia las
-# estimaciones en ventanas de 12 h (trailing) y las compara contra las leyes
-# reales de laboratorio (que llegan cada 12 h).
+# Compara la estimación del modelo (etapa 6) contra el compósito químico de
+# 12 h: media de la estimación en la ventana centrada del corte (bloques de
+# 30 min, >= 8 bloques). Después aplica el corrector de sesgo por Kalman, con
+# q_por_dia elegido SOLO en los compósitos de train, y compara las métricas.
 #
-# A diferencia de V1: ya NO usa exec(open('06_inferencia_hibrida.py').read())
-# para "importar" la clase (eso rompía si el CWD no era exactamente
-# notebooks/, y triplicaba la lógica). EstimadorHibrido se importa normal
-# desde src.pipeline.inferencia.
+# Métricas solo fuera de muestra (test jun-ago + producción sep); el periodo
+# de train se grafica sombreado como contexto. Se reporta sin y con las
+# lecturas que el IsolationForest marcó como anómalas.
 #
-# REQUIERE (no vienen en el repo, hay que generarlos/exportarlos primero):
-#   - data/processed/intensidades_cobre_test.csv (o el split que uses como test)
-#   - data/processed/AssayLab_combined_limpio.csv (ver scripts/assay_lab_test.py)
+#   courier_estimado.csv + composito_limpio.csv
+#       -> data/final/eval_composito.csv, data/final/eval_composito_metricas.csv
+#       -> reports/fig_08_modelo_vs_composito.png/.pdf
+#
+#   pixi run python notebooks/08_evaluacion_laboratorio.py
 # ============================================================
 
 import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))  # independiente del CWD
 
 import pandas as pd
-from sklearn.metrics import r2_score, mean_absolute_error
 
-from src.pipeline.config import CANALES, DATA_PROCESSED
-from src.pipeline.inferencia import EstimadorHibrido
+from src.pipeline.config import (ESTIMADO, LIMPIO_COMPOSITO, DATA_FINAL, REPORTS_DIR,
+                                 FECHA_INICIO_PRODUCCION)
+from src.pipeline.limpieza import fin_de_train
+from src.evaluacion.evaluar import (LEYES_COMPOSITO, alinear_composito, mascara_lecturas,
+                                    kalman_serie, elegir_q, metricas)
+from src.evaluacion.figuras import figura_tendencia
 
-VENTANA = '12h'                                         # ventana de agregación = frecuencia del lab
+est = pd.read_csv(ESTIMADO, parse_dates=['ts'])
+comp = pd.read_csv(LIMPIO_COMPOSITO, parse_dates=['ts'])
+DATA_FINAL.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- 1. Correr el modelo sobre cada lectura de intensidad del test ---
-est = EstimadorHibrido()                                # carga todos los modelos congelados
-inten = pd.read_csv(DATA_PROCESSED / 'intensidades_cobre_test.csv')  # intensidades nuevas de campo
-inten['ts'] = pd.to_datetime(inten['date'] + ' ' + inten['time'])  # timestamp por lectura
+filas, principal = [], None
+for con_anom in (False, True):
+    A = alinear_composito(est, comp, mascara_lecturas(est, con_anom))
+    etiqueta = "con anomalías" if con_anom else "sin anomalías"
+    print(f"\n== Compósitos alineados ({etiqueta}): {A.groupby('periodo').size().to_dict()} ==")
+    for ley in LEYES_COMPOSITO:
+        q, T = elegir_q(A, ley)
+        A[f"{ley}_kal"], _ = kalman_serie(A, ley, q)
+        if not con_anom:
+            print(f"  {ley}: q_por_dia elegido en train = {q}  (R² train {T['R2'].max():.3f})")
+        for per, mask in [("test", A.periodo == "test"), ("produccion", A.periodo == "produccion"),
+                          ("fuera de muestra", A.periodo != "train")]:
+            for var, col in [("modelo", f"{ley}_est"), ("modelo + Kalman", f"{ley}_kal")]:
+                filas.append({"lecturas": etiqueta, "ley": ley, "periodo": per, "variante": var,
+                              "q_por_dia": q if var != "modelo" else None,
+                              **metricas(A.loc[mask, ley], A.loc[mask, col])})
+    if not con_anom:
+        principal = A
 
-filas = []                                              # estimaciones por lectura
-for _, f in inten.iterrows():
-    r = est.predecir({c: f[c] for c in CANALES})        # estima leyes de esta lectura
-    if r['leyes']:                                      # si pasó la compuerta de calidad
-        filas.append({'ts': f['ts'], **r['leyes']})     # guarda ts + leyes estimadas
-pred = pd.DataFrame(filas).set_index('ts').sort_index() # serie temporal de estimaciones
+M = pd.DataFrame(filas)
+pd.set_option('display.width', 200)
+print("\n== Métricas vs compósito (est - lab para el sesgo) ==")
+print(M.round(3).to_string(index=False))
 
-# --- 2. Cargar las leyes de laboratorio del mismo período ---
-lab = pd.read_csv(DATA_PROCESSED / 'AssayLab_combined_limpio.csv', parse_dates=['fecha_hora'])
-lab = lab[(lab[['cu', 'fe', 'mo']] > 0).all(axis=1)]    # descarta filas con 0 (dato inválido)
-lab = lab[(lab['fecha_hora'] >= pred.index.min()) &
-          (lab['fecha_hora'] <= pred.index.max())].copy()  # recorta al período de test
+principal.to_csv(DATA_FINAL / 'eval_composito.csv', index=False)
+M.to_csv(DATA_FINAL / 'eval_composito_metricas.csv', index=False)
 
-# --- 3. Alinear: para cada punto de lab, promediar el modelo en las 12 h previas ---
-comparacion = []
-for _, L in lab.iterrows():
-    t = L['fecha_hora']                                 # instante del ensayo de lab
-    w = pred[(pred.index > t - pd.Timedelta(VENTANA)) & (pred.index <= t)]  # ventana previa
-    if len(w) == 0:                                     # sin intensidades en esa ventana
-        continue
-    comparacion.append({
-        'fecha_hora': t, 'n_lecturas': len(w),          # nº de intensidades promediadas
-        'pCu_est': w['pCu'].mean(), 'cu_lab': L['cu'],   # Cu estimado promedio vs lab
-        'pFe_est': w['pFe'].mean(), 'fe_lab': L['fe'],   # Fe estimado promedio vs lab
-        'pMo_est': w['pMo'].mean(), 'mo_lab': L['mo'],   # Mo estimado promedio vs lab
-    })
-M = pd.DataFrame(comparacion)                            # tabla comparativa
-print(f'Puntos de laboratorio comparados: {len(M)}')
-print(f'Lecturas de intensidad promediadas por ventana (media): {M["n_lecturas"].mean():.1f}')
-
-# --- 4. Métricas por elemento ---
-print('\n=== Desempeño del pipeline vs laboratorio (fuera de muestra) ===')
-print(f'{"elem":5s} {"R2":>8s} {"MAE":>8s} {"correlación":>13s}')
-for est_c, lab_c, nombre in [('pCu_est', 'cu_lab', 'Cu'),
-                             ('pFe_est', 'fe_lab', 'Fe'),
-                             ('pMo_est', 'mo_lab', 'Mo')]:
-    r2 = r2_score(M[lab_c], M[est_c])                    # R2
-    mae = mean_absolute_error(M[lab_c], M[est_c])        # error absoluto medio
-    corr = M[est_c].corr(M[lab_c])                       # correlación lineal
-    print(f'{nombre:5s} {r2:8.3f} {mae:8.3f} {corr:13.3f}')
-
-# --- 5. Guardar la tabla de comparación (para graficar / auditar) ---
-output_path = DATA_PROCESSED / 'comparacion_modelo_vs_lab.csv'
-M.to_csv(output_path, index=False)
-print(f'\nComparación guardada en: {output_path}')
+# --- Figura: tendencia comparativa, sin anomalías (el criterio principal) ---
+fuera = M[(M.lecturas == "sin anomalías") & (M.periodo == "fuera de muestra")]
+txt = {ley: {"modelo": fuera[(fuera.ley == ley) & (fuera.variante == "modelo")].iloc[0].to_dict(),
+             "kalman": fuera[(fuera.ley == ley) & (fuera.variante == "modelo + Kalman")].iloc[0].to_dict()}
+       for ley in LEYES_COMPOSITO}
+titulo = "Estimación del modelo vs compósito de laboratorio químico (12 h) — métricas fuera de muestra (jun–sep 2026)"
+for nombre, desde in [('fig_08_modelo_vs_composito.png', '2026-03-01'),            # foco: fuera de muestra
+                      ('fig_08_modelo_vs_composito_completo.png', None)]:          # todo el PI (desde 2025-07)
+    ruta = REPORTS_DIR / nombre
+    figura_tendencia(principal, list(LEYES_COMPOSITO), titulo, ruta, txt, desde=desde,
+                     inicio_test=fin_de_train(), inicio_prod=pd.Timestamp(FECHA_INICIO_PRODUCCION))
+    print(f"Figura: {ruta}")
