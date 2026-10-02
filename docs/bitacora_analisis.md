@@ -5,7 +5,7 @@ sesión de diagnóstico. Sirve para retomar el trabajo en otra máquina sin repe
 los experimentos. **Todos los números de este documento están medidos**, no
 estimados; cada uno indica el protocolo con que se obtuvo.
 
-Última actualización: 2026-09-29
+Última actualización: 2026-10-01
 
 ---
 
@@ -215,6 +215,14 @@ base 0.514 | +móvil 3d 0.505 | +móvil 7d 0.505 | +móvil 21d 0.464 | +interacc
 
 Autocorrelación diaria de las fracciones: lag1d 0.37–0.75, lag7d 0.02–0.14,
 lag30d ≈ 0. No hay regímenes de semanas visibles en el espectro.
+
+> **Corregido el 2026-10-01 — la conclusión de esta última frase estaba mal
+> leída, no los números.** Los números se reprodujeron (§13): lag7d 0.04–0.17
+> sobre las fracciones de grupo. Pero una autocorrelación nula a 7 días es
+> **exactamente lo que produce un régimen de 3-5 días**, no la ausencia de
+> régimen; y el espectro habla de **periodicidad** (no hay ciclo semanal), no de
+> **persistencia**. Sí hay régimen de mineral, y cambia cada 1-2 semanas a
+> resolución semanal: ver §13.
 
 ### 2.7 Detección de ruptura en lugar de identificación de régimen
 
@@ -977,3 +985,698 @@ modelo contra cada referencia y por qué el Kalman empeora Cu contra la BD.
 Referencia oficial para Cu (BD o compósito). Notebook 10 (recalibración de Fe
 contra el compósito) y `run_pipeline.py` con la interfaz nueva. Inferencia en
 línea. Sensibilidad del GMM por fold.
+
+## 12. Sesión 2026-10-01 — origen operativo de las dos fuentes de laboratorio
+
+Aclaración del usuario sobre de dónde sale físicamente cada ley, y la
+verificación de lo que esa aclaración pone en duda. Todas las cifras de esta
+sección las reproduce `scripts/verificar_fuentes_laboratorio.py` (solo lectura,
+sobre las tablas limpias de la etapa 1a).
+
+### 12.1 Las dos fuentes, y por qué hay dos rutas de calibración
+
+**Ambas leyes salen del mismo courier**, pero de dos cortes físicos distintos:
+
+| | BD (`sample_id=24`) | Compósito (PI) |
+|---|---|---|
+| Qué es | muestra **puntual** del concentrado colectivo, toma rutinaria | **compósito de 12 h** del concentrado colectivo / final |
+| Dónde se corta | material que **sí pasó por los rayos X** | **antes del multiplexor**, antes de los rayos X |
+| Intensidad propia | **sí** — existe la lectura del analizador que le corresponde | **no** — ninguna lectura le corresponde |
+| Cadencia medida | **Lun/Mie/Vie**, 356/365 (97.5 %), intervalos modales 2 d y 3 d | **2/día**, marcas 07:30 y 19:30, los 7 días |
+| Volumen | 365 muestras con ley, 2022-12-05 → 2026-08-26 | 2601 ensayos, ~95 % de los dos turnos, → 2026-09-29 |
+| Leyes | Fe Cu Zn Mo Ins Sol | Fe Cu Mo Ins (**sin Zn**) |
+| Hora de toma | 09-13 h: 297 · **15-19 h: 60** · otras: 8 | fija por turno |
+
+Esto es la razón **física**, no metodológica, de los dos protocolos de
+evaluación de §11.2, y conviene citarla así en la tesis:
+
+- La muestra de la BD es el mismo material que midió el analizador, de modo que
+  existe **una** lectura que le corresponde → el calce exacto por valor de los 4
+  metales redondeados (§10.3, 125/125) no es un truco de emparejamiento: es
+  identidad del material. Por eso la BD sirve para entrenar y evaluar por
+  lectura.
+- El compósito se corta **antes** de los rayos X, así que **no existe** lectura
+  que le corresponda → la única alineación posible es promediar la estimación
+  sobre su ventana. La ventana no es una elección entre varias: es la
+  consecuencia del punto de muestreo.
+
+Corolario ya conocido por otra vía: el compósito no reporta Zn, que es la razón
+por la que el Zn no es auditable contra el laboratorio de referencia.
+
+### 12.2 ¿La marca del compósito es el centro de su ventana o el cierre del turno?
+
+La aclaración destapa una objeción que el pipeline no tenía respondida de forma
+explícita. Si el compósito se **acumula a lo largo del turno** y se reporta al
+cambio de turno, su soporte sería `[t-12h, t]` y la ventana **centrada**
+`[t-6h, t+6h]` que usa todo el pipeline (`VENTANA_COMPOSITO_H`) estaría
+desplazada 6 h — con una lectura cada ~21 min y régimen que cambia día a día,
+6 h no es despreciable.
+
+Medido **ley contra ley, sin modelo en medio** (cada muestra de la BD contra el
+compósito que le asigna cada hipótesis; las 4 filas con ley sospechosa fuera):
+
+```
+hipótesis                 n        Fe               Cu               Mo
+A centro [t-6h, t+6h]    351   -0.170 / 0.612   -1.243 / 0.476   +0.073 / 0.917
+B cierre [t-12h, t]      350   -0.346 / 0.521   -1.447 / 0.365   +0.084 / 0.801
+                                        (sesgo BD - compósito / correlación)
+```
+
+**A gana en las tres leyes.** El árbitro es **Mo**, la única ley en que ambos
+laboratorios concuerdan (§11.3): 0.917 contra 0.801, sin ambigüedad. La marca
+del compósito se comporta como el **centro** de la ventana que integra, no como
+el cierre del turno.
+
+Esto confirma por una vía independiente el barrido de lag documentado en
+`src/pipeline/calibracion_composito.py` (lag −12 h a +12 h, óptimo en lag 0,
+r_cu 0.345 contra 0.213 en lag −12 h): ahí se midió con intensidades y modelo,
+aquí con laboratorio contra laboratorio. **La ventana centrada queda sostenida y
+no hay que tocar nada** — se registra porque, dicha la cadencia operativa en voz
+alta ("un compósito por turno, cada 12 h"), la ventana centrada *parece* mal
+elegida, y es una objeción fácil de hacer en una sustentación.
+
+### 12.3 El sesgo de Cu no es artefacto de alineación ni de hora de toma
+
+Aporta a la decisión abierta de §11.4 (qué laboratorio manda para Cu):
+
+```
+BD tomada 09-13 h: n=285  sesgo Cu -1.121  corr 0.499
+BD tomada 15-19 h: n= 58  sesgo Cu -1.813  corr 0.353
+```
+
+El sesgo persiste en ambas franjas y empeora por la tarde; y la asignación de
+compósito que se usa es la correcta (§12.2). Entonces el −1.24 de Cu es
+**diferencia sistemática entre los dos ensayos**, no un desalineamiento ni un
+efecto diurno. Se separan dos cosas que conviene no confundir al redactar:
+
+- la **diferencia de soporte temporal** (corte puntual vs integral de 12 h)
+  explica la **correlación** baja — son dos cantidades distintas y ningún modelo
+  puede acertar a ambas a la vez;
+- el **nivel** (−1.24 puntos) no lo explica el soporte: promediar no corre la
+  media. Queda como diferencia de ensayo, y sigue pendiente de metalurgia.
+
+### 12.4 Consecuencia para `tesis_ucspv2/`
+
+El Cap. 4 describe los datos como "BD + PI concatenados" (ya señalado en el ADR
+del 2026-09-30 sobre los crudos por fuente). Se suma a eso que la descripción de
+datos tiene que distinguir **dos cortes físicos con cadencias distintas**
+(puntual Lun/Mie/Vie con intensidad propia vs compósito de turno sin ella), que
+es lo que justifica los dos protocolos de evaluación. Parte de la reconciliación
+pendiente.
+
+## 13. Sesión 2026-10-01 (2) — a qué velocidad cambia el mineral
+
+Pregunta del usuario: *el mineral cambia cada semana o dos semanas, y entonces
+las intensidades también; compruébalo*. Se confirma en lo esencial y se corrige
+un matiz que importa para el diseño del gate. Reproducible con
+`scripts/verificar_escala_temporal_regimen.py` (solo lectura).
+
+### 13.1 El régimen semanal: sí cambia cada 1-2 semanas
+
+64 semanas con ≥ 50 lecturas (2025-07 → 2026-09), grupo dominante por semana:
+
+| | |
+|---|---|
+| cambia de dominante de una semana a la siguiente | **54 %** |
+| duración de una racha | mediana **1 sem**, media **1.8**, máx 6 |
+| rachas de 1-2 semanas | **77 %** |
+| pureza del dominante | mediana 0.59 |
+
+### 13.2 Las intensidades se mueven con él
+
+Varianza de cada feature que explica la semana (lecturas válidas, n = 24 461):
+
+| feature | var. explicada | medianas semanales | sd intra-semana |
+|---|---|---|---|
+| `lr_mo_cu` | **0.52** | −3.30 … −2.11 | 0.23 |
+| `lr_fe_cu` | 0.38 | −0.20 … +0.02 | 0.05 |
+| `lr_zn_cu` | 0.37 | −5.52 … −4.90 | 0.15 |
+| `logSumI` | 0.67 | +10.95 … +11.34 | 0.06 |
+
+En `lr_mo_cu` el recorrido entre semanas es **~5×** la dispersión dentro de la
+semana: la semana es un agrupamiento real de las intensidades, no ruido.
+
+### 13.3 El matiz: la escala propia es 3-5 días, más rápida que semanal
+
+Autocorrelación de la mediana diaria (415 días con ≥ 20 lecturas):
+
+```
+lag(d)  frac Cu  frac Mo  frac Zn  frac Fe  lr_fe_cu  lr_zn_cu  lr_mo_cu  logSumI
+   1      0.65     0.69     0.66     0.57      0.70      0.65      0.76     0.87
+   3      0.28     0.36     0.30     0.27      0.37      0.21      0.42     0.74
+   5      0.06     0.16     0.13     0.18      0.23      0.05      0.24     0.71
+   7      0.06     0.10     0.04     0.04      0.17     -0.03      0.15     0.68
+  14      0.13    -0.05    -0.03    -0.09      0.06     -0.02     -0.11     0.67
+  30     -0.01    -0.06    -0.14     0.01      0.03     -0.01     -0.10     0.59
+```
+
+Mineral y log-cocientes se descorrelacionan hacia el **día 5-7**. La racha
+semanal de §13.1 es el mismo fenómeno visto con una lupa más gruesa: a
+resolución semanal *parece* durar 1-2 semanas porque la agregación suaviza, pero
+el recambio ocurre cada 3-5 días.
+
+**`logSumI` es la excepción, y es informativa:** sigue correlacionado 0.59 a 30
+días. Esa es la **deriva lenta de dilución/instrumento**, no el mineral.
+Quedan separadas dos escalas de tiempo dentro de la misma señal — mineral rápido
+(3-5 d) y dilución lenta (semanas-meses) —, lo que respalda que `dil` se
+construya con una EWMA de 90 d y los log-cocientes no.
+
+**Corrección a §2.6.** La frase *"no hay regímenes de semanas visibles en el
+espectro"* estaba mal leída: sus números se reproducen (lag7d 0.04-0.17), pero
+una autocorrelación nula a 7 días es **exactamente lo que produce un régimen de
+3-5 días**, no su ausencia; y el espectro habla de *periodicidad*, no de
+*persistencia*. Anotado en el propio §2.6.
+
+### 13.4 Consecuencia para el gate de la arquitectura nueva
+
+Fija la constante de tiempo que faltaba. El gate no puede operar:
+
+- **por lectura** (~21 min): la etiqueta cruda cambia en el 11.7 % de las
+  lecturas consecutivas y el **41 %** de las rachas dura una sola lectura
+  (mediana 42 min) — chattering puro, y cada conmutación inyecta un escalón
+  artificial en la estimación;
+- **por semana:** llegaría tarde, el régimen ya cambió.
+
+La escala del fenómeno es **3-5 días** → EWMA con *half-life* de ~1-2 días
+(≈ 70-140 lecturas) más histéresis. Es un parámetro **derivado de los datos**.
+
+### 13.5 La purga: una hipótesis que se planteó, se midió y resultó FALSA
+
+**Hipótesis (descartada).** Si los features se descorrelacionan en 3-5 días, la
+purga de 12 h de `split_purgado` no separaría nada relevante: las muestras de la
+BD están a **2.9 d** de mediana (≤ 3 d en el 56 % de los pares) y sus leyes
+consecutivas correlacionan `pFe +0.50 · pMo +0.46 · pCu +0.24 · pZn +0.01`, así
+que una muestra de test podría estar a 2 días de su vecina de train compartiendo
+régimen. Se predijo que con purga de 3-5 días se eliminarían filas y los R²
+bajarían.
+
+**Medido — no ocurre.** Barriendo la purga en la etapa 5 completa:
+
+```
+purga      pFe              pCu              pMo              pZn
+ 12h   -0.1703 (285)    0.5450 (285)    0.7758 (285)    0.8981 (215)
+  3d   -0.1703 (285)    0.5450 (285)    0.7758 (285)    0.8981 (215)
+  5d   -0.1696 (285)    0.5450 (285)    0.7701 (285)    0.8977 (215)
+  7d   -0.1782 (285)    0.5447 (285)    0.7701 (285)    0.8977 (215)
+```
+
+Los R² no se mueven más allá de la cuarta cifra. Filas purgadas: 0 hasta 4 d,
+**1** a 5 d, **4** a 7 d.
+
+**Por qué — y esto es mejor noticia que la hipótesis.** Los cinco cortes del
+walk-forward caen por sí solos en huecos de muestreo grandes:
+
+```
+fold 1  2023-06-14 -> 2023-06-19   hueco  4 d 18 h
+fold 2  2024-02-09 -> 2024-02-19   hueco 10 d  5 h
+fold 3  2024-08-07 -> 2024-08-12   hueco  5 d  2 h
+fold 4  2025-04-11 -> 2025-04-16   hueco  5 d  0 h
+fold 5  2025-10-15 -> 2025-10-22   hueco  7 d  6 h
+```
+
+Todos ≥ 4 d 18 h, o sea **iguales o mayores que la escala de descorrelación del
+régimen** (3-5 d, §13.3). La fuga que se hipotetizó **no existe en estos folds**:
+no hay ninguna muestra de train a menos de ~5 días del bloque de test, de modo
+que la purga no tiene nada que quitar. El 23 % de los 341 intervalos supera los
+5 días, y los 5 cortes cayeron en intervalos de ese tipo.
+
+**Consecuencia para la sustentación — el argumento mejora.** Hasta ahora la purga
+se defendía solo por corrección metodológica (tolerancia de emparejamiento 6 h,
+ventana de evaluación 12 h). Ahora hay un argumento **positivo y medido**: los
+huecos reales train→test (4.8 a 10.2 d) **exceden la escala de autocorrelación
+del proceso** (3-5 d), así que los folds son efectivamente independientes. Eso es
+mucho más fuerte que "la purga no elimina filas".
+
+**El ADR del 2026-09-06 queda confirmado, no invertido:** la caída de R² de B2
+viene del orden temporal y de los folds compartidos, no de la purga. La
+corrección que este §13.5 intentó introducir **no procede**.
+
+**Lo que sí queda en pie** de la autocorrelación entre muestras vecinas: el **N
+efectivo es menor que 342**, porque muestras separadas 2-3 días comparten
+información (Fe +0.50, Mo +0.46). Eso no sesga el R² al alza por fuga, pero sí
+resta potencia a cualquier comparación entre particiones — razón de más para que
+el control aleatorio siga siendo obligatorio, como ya lo es. Única salvedad
+menor: el hueco del fold 1 (4 d 18 h) queda justo por debajo de los 5 d, donde
+la autocorrelación aún es 0.06-0.24.
+
+### 13.6 Siguiente
+
+La purga queda cerrada sin cambios (`PURGA = "12h"` se mantiene, ahora con
+justificación más fuerte). Despejado el camino para construir la arquitectura
+nueva: 12 modelos (4 grupos × Cu/Fe/Mo) con gate de histéresis sobre EWMA de la
+probabilidad del GMM, *half-life* 1-2 días (§13.4), entrenados sobre las 589
+ventanas de compósito de train. Sigue siendo obligatorio que supere el control
+aleatorio de particiones.
+
+## 14. Sesión 2026-10-01 (3) — la arquitectura de 12 modelos por grupo, medida
+
+Encargo del usuario: reemplazar la tabla de ruteo por una arquitectura donde
+**cada grupo tiene sus propios modelos de Cu, Fe y Mo** y un **trigger** conmuta
+de modelo ante cada lectura nueva. Se midió antes de construir el trigger.
+Código: `src/pipeline/gate_grupos.py` (`python -m src.pipeline.gate_grupos`).
+
+### 14.1 Por qué sobre ventanas de compósito y con purga de días
+
+Con las muestras puntuales de la BD la arquitectura **no se puede ni entrenar ni
+validar**: dos de los cuatro grupos no llegan a N≥60 (Mo 54, Zn 53) y el test
+supervisado son 18 muestras con **Fe = 0**. Las ventanas de compósito dan **589
+de train** (Cu 228 / Mo 176 / Zn 117 / Fe 68) y **153 de test**, y el compósito
+mide exactamente las tres leyes del encargo. Pureza del grupo dominante: mediana
+0.88, ≥ 0.7 en el 72 % de las ventanas.
+
+**La purga aquí sí muerde**, al contrario que en §13.5: las ventanas son
+contiguas cada 12 h, así que en cada corte hay una ventana de train pegada al
+bloque de test, y el régimen se descorrelaciona en 3-5 d (§13.3). Se midió con
+purga 12 h y 5 d; las conclusiones no cambian (las cifras de abajo son con 5 d).
+
+### 14.2 Filtro 1 — control de particiones aleatorias (200, dentro de train)
+
+Pasan 4 de 12 celdas: `pFe`/Zn (+0.678, pctl 100), `pCu`/Zn (+0.347, pctl 98),
+`pMo`/Cu (+0.035, pctl 100), `pMo`/Fe (+0.119, pctl 100).
+
+**Pero hay que leer el signo del R², no solo la mejora.** El global sobre
+ventanas es **negativo** en Fe (−0.130) y Cu (−0.199): peor que predecir la
+media. La "mejora" de `pFe`/Zn es pasar de −0.806 a −0.128 — de catastrófico a
+malo, **sigue siendo negativo**. Presentar eso como un éxito habría sido
+engañoso. Mo es el único con global sano: **0.847** fuera de fold.
+
+### 14.3 Filtro 2 — supervivencia fuera de muestra (153 ventanas de test)
+
+```
+ley   grupo  N_tr  N_te   R2 glob   R2 loc   mejora
+pFe   Zn      117    49    -1.171   -2.423   -1.252   <- COLAPSA
+pCu   Zn      117    49    -0.021    0.033   +0.054   <- nada (ambos ~0)
+pMo   Cu      228    37     0.597    0.700   +0.103   <- SOBREVIVE
+pMo   Fe       68    12     0.481    0.476   -0.005   <- no se sostiene (N=12)
+```
+
+De las 4 que pasaron el control, **solo una sobrevive**: `pMo` en el grupo Cu, y
+además crece fuera de muestra (+0.035 en train → +0.103 en test). `pFe`/Zn se
+invierte por completo: era sobreajuste, no señal.
+
+### 14.4 Veredicto: la arquitectura de 12 modelos no se sostiene
+
+**1 de 12 celdas** sobrevive los dos filtros. Probando 12 celdas, que una pase es
+lo que produce el azar; los dos filtros independientes la hacen más creíble que
+un test suelto, pero **1 de 12 es una pista, no un resultado**. No se puede
+replicar más: el período de producción tiene solo 8 ventanas del grupo Cu.
+
+Razón de fondo, ya visible en los N: la arquitectura obliga a cada modelo de
+grupo a aprender de **1/3 a 1/8** de los datos (228/176/117/68 contra 589). Con
+estos tamaños el costo en varianza se come el beneficio de especializar, salvo en
+la celda que sobrevive.
+
+**Es la tercera vez que la idea de particionar por grupo cae con el mismo
+control**: seis pruebas en §8-9, la etapa 5 sobre muestras de la BD (§11.1), y
+ahora sobre ventanas de compósito con 8× más datos de test. Que falle con más
+datos y mejor protocolo es, para la tesis, un resultado negativo **sólido y
+defendible**, no una ausencia de resultado.
+
+**El trigger no se implementó.** Construir un gate de histéresis para conmutar
+entre modelos que no se distinguen del azar sería decoración; su diseño queda
+especificado en §13.4 por si alguna vez hay evidencia que lo justifique.
+
+### 14.5 Subproducto aprovechable
+
+Sobre ventanas de 12 h el **modelo global de Mo** da **R² 0.847 fuera de fold** y
+0.76-0.80 en test por grupo — mejor que la ruta por lectura de la etapa 5
+(0.78). Refuerza el encuadre "Mo como resultado principal" y es una cifra usable.
+
+Y queda confirmado por una vía más que **Fe y Cu no funcionan**: a nivel de
+ventana su global es negativo, con o sin partición por grupo.
+
+## 15. Sesión 2026-10-01 (4) — cabeza y relave: tipos de mineral donde corresponde
+
+El usuario señaló que en la BD y en el PI hay datos de **cabeza (rebose de
+hidrociclones)** y **relave final**, con su propio compósito cortado antes de los
+rayos X. Resultó ser el hallazgo más importante de la sesión: los tipos de
+mineral se venían definiendo sobre el **concentrado**, que es el producto de la
+flotación, no el mineral que entra.
+
+### 15.1 Lo que había sin extraer
+
+Buscando en el PI aparecieron tres familias que nadie había mirado:
+
+| Tags | Stream | Leyes | Historia |
+|---|---|---|---|
+| `7100AIP011-014MAN` | **cabeza** (rebose hidrociclones) | Fe, Cu, **Zn**, Mo | 2022-12-30 → hoy |
+| `7100AIP031-034MAN` | **relave final** | Fe, Cu, Mo | 2022-12-30 → hoy |
+| `7100AIP101-104MAN` | concentrado colectivo (ya en uso) | Fe, Cu, Ins, Mo | 2022-12-30 → hoy |
+| 66 tags `_296290_*Canal*` | intensidades de **todas** las líneas de ambos couriers | 5 canales c/u | varía |
+
+Los tres compósitos comparten grilla (07:30 / 19:30), historia y la propiedad de
+§12.1: **se cortan antes de los rayos X**, así que ninguno tiene lectura de
+intensidad propia. **La cabeza es la única que trae %Zn.**
+
+Extraídos a `data/raw/composito_cabeza_pi.csv` y `composito_relave_pi.csv`:
+**2603 filas cada uno, 0 nulos, 0 ceros centinela.** Intensidades de cabeza
+(`_296290_RebHidroL1/L2_Canal*`) existen desde **2026-03-01** — 7 meses, frente a
+las 58 épocas que dejaron el §8.3 inconcluso.
+
+**Se explica el viejo misterio** de que ninguna de las otras 24 líneas calzara
+con el PI (§10.3): no calzaban porque **cada stream tiene sus propios tags** y
+solo se extraían los de `ConcFinal`.
+
+### 15.2 Dos fuentes independientes de cabeza concuerdan
+
+Compósito de cabeza del PI contra la ley de mina de `mineral.csv` (§14 previo),
+calce 1:1 por turno, n=335: **Fe +0.677, Mo +0.676, Zn +0.581, Cu +0.575**, con
+medias cercanas (Cu 0.486 mina vs 0.522 planta; Mo 0.029 vs 0.034). Dos
+laboratorios, dos puntos de muestreo, dos sistemas: se validan mutuamente.
+
+### 15.3 La cabeza explica el concentrado
+
+Compósito a compósito, misma ventana de 12 h, **n=2601 sobre 4 años**:
+
+```
+desfase    cu_cab->cu   fe_cab->fe   mo_cab->mo
+  +0h        +0.300       +0.342       +0.848
+ +12h        +0.262       +0.300       +0.758
+ +24h        +0.268       +0.323       +0.646
+```
+
+**`mo_cab → mo` = +0.848.** El decaimiento con el desfase confirma que el lag 0 es
+el correcto: ambos son compósitos de 12 h del mismo período y la residencia de
+planta es menor que la ventana. Para Cu y Fe hay 0.30-0.34: débil, pero **no cero
+y de naturaleza distinta a las intensidades** — es lo primero con señal para esos
+dos elementos en todo el proyecto.
+
+### 15.4 Definición de los tipos de mineral (`src/pipeline/tipos_mineral.py`)
+
+**Por qué log-cocientes y no leyes absolutas.** El usuario advierte que la muestra
+de relave viene con **mucha dilución de agua**. Medido: la mayor parte de la
+varianza de las leyes absolutas es un **factor de nivel común**, no composición —
+el CV cae de **0.671 a 0.094** en el Zn de cabeza y de **0.256 a 0.105** en el Fe
+de relave al pasar a log-cocientes. El alr de Aitchison contra Cu es invariante a
+cualquier efecto multiplicativo de nivel, así que el tipo queda definido por la
+composición y no por cuánta agua traía la muestra. Misma decisión que la etapa 2.
+
+Protocolo idéntico al de la etapa 4, para que los resultados sean comparables:
+ajuste **solo en train** (≤ 2026-05-31, n=2370), StandardScaler sin Yeo-Johnson,
+GMM `full`, y **k por estabilidad ARI entre mitades disjuntas**, nunca por BIC.
+
+**CABEZA — k=2** (ARI 0.769, silhouette 0.267; k=3 cae a ARI 0.506):
+
+> **REVISADO el mismo día a k=3 — ver §17.** La regla automática (máxima
+> estabilidad ARI) da k=2, pero k=2 **fusiona Cu y Mo**, que el ensayo
+> independiente de la mina distingue con p=1.4e-15, y la operación necesita
+> separarlos para conmutar estrategia de control. La tabla de abajo es la de
+> k=2 y se conserva como registro; **el k vigente es 3** (`config.K_TIPO_CABEZA`).
+
+| tipo | n | % | %Cu | %Fe | %Zn | %Mo |
+|---|---|---|---|---|---|---|
+| **Cu** | 1617 | 62.1 | **0.606** | 2.543 | 0.006 | **0.033** |
+| **Fe** | 986 | 37.9 | 0.498 | **3.156** | 0.007 | 0.020 |
+
+**RELAVE — k=3** (ARI 0.659; k=2 es inestable, ARI **0.069**):
+
+| tipo | n | % | %Cu | %Fe | %Mo |
+|---|---|---|---|---|---|
+| **Mo** | 1045 | 40.1 | 0.049 | 2.108 | 0.007 |
+| **Fe** | 796 | 30.6 | 0.046 | **2.609** | 0.003 |
+| **Cu** | 762 | 29.3 | **0.061** | 1.962 | 0.005 |
+
+> **Ojo con la lectura del relave:** son tipos de *lo que se pierde*, no de
+> riqueza de mineral. El tipo "Cu" del relave es cola **relativamente rica en
+> Cu** (0.061 contra 0.046), o sea **peor recuperación**, no mejor mineral.
+
+### 15.5 Validación externa de los tipos de cabeza
+
+**(a) Ancla geológica — la fase de la mina** (n=335):
+
+| tipo cabeza | F05 mediana | F06 mediana | %Fe mina | %Mo mina |
+|---|---|---|---|---|
+| Cu | **67.1 %** | 32.7 % | 2.917 | 0.029 |
+| Fe | 55.7 % | **44.2 %** | 3.381 | 0.019 |
+
+Mann-Whitney sobre F05: **p = 7.4e-07**. El tipo de mineral en cabeza está
+anclado a **dónde estaba cargando la pala**. F05 → tipo Cu, F06 → tipo Fe.
+
+**(b) Los grupos del concentrado** (GMM sobre intensidades, n=803 ventanas):
+
+| tipo cabeza | grupo Cu | grupo Mo | grupo Zn | grupo Fe |
+|---|---|---|---|---|
+| Cu | 37.4 % | **43.3 %** | 11.7 % | 7.6 % |
+| Fe | 21.4 % | 8.9 % | **48.9 %** | 20.8 % |
+
+Cabeza tipo Cu → concentrado Cu+Mo (**80.7 %**); cabeza tipo Fe → concentrado
+Zn+Fe (**69.7 %**). Dos clusterings, sobre streams distintos y con instrumentos
+distintos (compósito de laboratorio vs intensidades de rayos X), concuerdan: se
+validan mutuamente. Hallazgo lateral: la cabeza Fe produce sobre todo el
+concentrado que el GMM etiqueta "Zn".
+
+**(c) Metalurgia — recuperación por fórmula de dos productos:**
+
+| tipo cabeza | n | Rec. Cu | Rec. Mo | %Cu conc | %Mo conc | %Fe conc |
+|---|---|---|---|---|---|---|
+| Cu | 1617 | **91.32** | **83.06** | 26.17 | **1.39** | 28.18 |
+| Fe | 984 | 90.47 | 80.35 | 25.17 | 1.01 | **29.20** |
+
+El tipo de cabeza **se propaga al producto**: alimentación tipo Cu da concentrado
+más rico en Cu y Mo y mejor recuperación. Cruzando con el tipo de relave, la
+recuperación de Cu va de **88.54** (cabeza Fe + relave Cu, lo peor) a **92.73**
+(cabeza Cu + relave Fe, lo mejor): **4 puntos** de recuperación, operativamente
+relevante.
+
+Y los dos extremos del circuito concuerdan: cabeza Fe → relave Fe en el 58.6 % de
+los casos; cabeza Cu → relave Mo/Cu en el 86.5 %.
+
+**(d) Persistencia:** rachas del tipo de cabeza de mediana **1 día**, media
+**2.7 días**, máximo 26 días; 53 % duran ≤ 1 día, 25 % ≥ 3 días. Coincide con la
+escala de descorrelación de 3-5 días del §13.3 — misma física, medida ahora
+sobre la alimentación en vez del producto.
+
+### 15.6 Qué desbloquea
+
+- **§8.3 deja de estar inconcluso:** hay 7 meses de intensidades de cabeza
+  solapadas con las de concentrado, no 58 épocas.
+- **El Zn deja de ser inauditable** por el lado de la alimentación: la cabeza
+  trae %Zn y el concentrado no.
+- **Balance metalúrgico completo** a 12 h por 4 años: recuperación calculable.
+- **Cu y Fe tienen por primera vez una variable con señal** (0.30/0.34 desde la
+  cabeza), independiente de las intensidades.
+
+### 15.7 Correcciones que esto obliga
+
+- `CLAUDE.md` daba a entender que el courier solo expone `ConcFinal`: hay 66 tags
+  de intensidad por stream.
+- `works4cdp_assayspsi` existe en la BD con el esquema completo de sólidos y
+  granulometría (`psolid`, `aSol`, `P80`, mallas) y está **vacía (0 filas)**. El
+  hueco de `pSol` de alta frecuencia no es de diseño: es de poblado.
+- La BD tiene cabeza en `sample_id` 17 (L1) y 18 (L2), con `pSol` (215 y 243
+  muestras), pero solo 36 y 94 filas posteriores al inicio del PI de alta
+  frecuencia: la vía BD sigue siendo insuficiente, la vía PI no.
+
+## 16. Sesión 2026-10-01 (5) — ¿la cabeza mejora la estimación del concentrado? No
+
+Medición directa de la pregunta que abrió el §15. Código:
+`src/pipeline/aporte_cabeza.py` (`python -m src.pipeline.aporte_cabeza`).
+
+**Dos escenarios, y la distinción importa más que los números.** El compósito de
+cabeza de **la misma ventana** llega junto con el del concentrado: si lo tienes,
+ya tienes el laboratorio, así que mide información pero **no es usable en línea**.
+El de la **ventana anterior** (12 h) sí está disponible al momento de estimar y es
+el único con valor operativo.
+
+Base = las 5 features de intensidad del concentrado (`FEATS_REGRESION`);
+tratamiento = base + las 4 leyes de cabeza. Mismos puntos fuera de fold,
+`split_purgado` con purga de 5 d, y los dos filtros del §14.
+
+### 16.1 Filtro 1 — walk-forward en train, control de 200 permutaciones
+
+```
+                         R2 base   R2 +cab   mejora  p95 ctrl  pctl  veredicto
+lag 0   pFe                -0.130   -0.198   -0.069    -0.000     4  no aporta
+        pCu                -0.199   -0.192   +0.008    +0.091    56  no aporta
+        pMo                 0.847    0.849   +0.002    -0.002   100  no aporta
+lag 1   pFe                -0.134   -0.170   -0.036    +0.003    24  no aporta
+        pCu                -0.231   -0.239   -0.008    +0.118    26  no aporta
+        pMo                 0.847    0.841   -0.006    -0.001    69  no aporta
+```
+
+### 16.2 Filtro 2 — fuera de muestra (test)
+
+```
+        pFe    -0.198 -> -0.295  (-0.097)   |  lag 1:  -0.201 -> -0.217  (-0.016)
+        pCu    -0.115 -> -0.046  (+0.069)   |  lag 1:  -0.115 -> +0.037  (+0.152)
+        pMo     0.827 ->  0.867  (+0.040)   |  lag 1:   0.831 ->  0.837  (+0.006)
+```
+
+### 16.3 Veredicto: la cabeza no aporta, y se entiende por qué
+
+**Ninguna celda pasa el filtro 1 en ninguno de los dos escenarios.**
+
+La explicación es la parte interesante: §15.3 midió `mo_cab → mo` = **0.848**, y el
+modelo que usa **solo** las intensidades del concentrado ya llega a R² **0.847**.
+Son el mismo número. **La información que la cabeza tiene sobre el Mo del
+concentrado es redundante con lo que los rayos X ya ven** — la cabeza está aguas
+arriba de la misma señal, no es información independiente sobre el producto. Para
+Cu y Fe no hay nada que mejorar: el modelo base es negativo, peor que la media.
+
+**El único aparente éxito es falso por el mismo patrón del §14.** `pCu` a lag 1
+mejora +0.152 en test (−0.115 → +0.037) pero **falla el filtro 1** (percentil 26).
+Es la figura espejo del `pFe`/grupo Zn del §14.3, que pasaba en train y colapsaba
+fuera de muestra. Un resultado que solo aparece en uno de los dos filtros no se
+reporta como resultado.
+
+### 16.4 Lección metodológica — el control necesita un piso de magnitud
+
+En la primera corrida, `pMo` a lag 0 salió **"APORTA"** con una mejora de
+**+0.002**. El control por permutación añade 4 columnas de ruido, así que su p95
+queda en ~0 o negativo y **cualquier mejora no negativa lo supera**. La vara del
+control es necesaria pero no suficiente: hace falta además un **piso de
+magnitud**. Se añadió `MEJORA_MIN = 0.01` y el veredicto pasó a "no aporta", que
+es lo honesto. Aplicable a cualquier prueba de feature nueva en este proyecto,
+no solo a esta.
+
+### 16.5 Lo que queda sin probar, y es la mejor apuesta
+
+Esto cierra la cabeza **como feature de regresión del compósito**, no la cabeza
+en general. Siguen abiertas dos vías distintas:
+
+1. **Las intensidades de cabeza** (`_296290_RebHidroL1/L2_Canal*`, desde
+   2026-03-01, cadencia de courier): son una señal **aguas arriba y en tiempo
+   real**, no un ensayo de laboratorio que llega tarde. Es otra proposición y es
+   la que desbloquea el §8.3.
+2. **La cabeza como variable de régimen / gating**, no como feature de
+   regresión — que es para lo que el §15.5 mostró que sirve (ancla geológica,
+   p=7.4e-07, y correspondencia con los grupos del concentrado), y que es
+   distinto de predecir la ley punto a punto.
+
+## 17. Sesión 2026-10-01 (6) — k=3 en cabeza, y el reporte de producción ago-sep
+
+Encargo del usuario: validar con la cabeza los **4 grupos** que dio el
+concentrado, comparar con `mineral.csv`, y con agosto-septiembre como producción
+hacer un **reporte gráfico** de cómo afectó el cambio de mineral a las variables
+operativas de los espesadores, con énfasis en el nivel de interface.
+
+### 17.1 Los 4 grupos del concentrado NO se reproducen en la cabeza
+
+Métricas del GMM sobre log-cocientes de cabeza (train n=2370):
+
+```
+ k    bic   silhouette   ARI estab.   grupo_min_%
+ 2  18990     0.267        0.769         39.1
+ 3  18947     0.209        0.506         28.6
+ 4  18960     0.240        0.561          8.9
+ 5  18990     0.202        0.365          8.7
+ 6  19002     0.223        0.446          5.6
+```
+
+Dentro del rango que la operación espera (3 o 4), **k=4 gana en las métricas**
+(silhouette 0.240 vs 0.209, ARI 0.561 vs 0.506) **pero no sobrevive el contraste
+con la mina**: sus tipos Cu-2 y Zn+Fe son **indistinguibles** para el ensayo de
+mina (%Fe 3.360 vs 3.369) y el cuarto grupo cae a **8.9 %** (n=24 en el traslape
+con `mineral.csv`); además el "cuarto grupo" es un **desdoble de Cu**, no un
+mineral nuevo. Con **k=3** cada tipo tiene firma propia:
+
+| tipo cabeza | n | % | %Cu | %Fe | %Zn | %Mo | F05 mina | %Mo mina |
+|---|---|---|---|---|---|---|---|---|
+| **Cu** | 976 | 37.5 | **0.605** | 2.679 | 0.005 | 0.024 | 59.1 | 0.021 |
+| **Mo** | 882 | 33.9 | 0.578 | 2.546 | 0.007 | **0.041** | **67.8** | **0.032** |
+| **Fe+Zn** | 745 | 28.6 | 0.488 | **3.187** | **0.008** | 0.020 | 55.8 | 0.020 |
+
+Kruskal contra `mineral.csv` (n=335): **%Mo p=1.4e-15**, %Fe p=1.1e-07,
+%Cu p=9.3e-07, F05 p=5.9e-05. Los tres tipos se validan contra un ensayo
+independiente y contra la fase de la pala.
+
+**Hallazgo de fondo:** en la cabeza **Zn y Fe no se separan** — se separan recién
+en el concentrado. Los 4 grupos del concentrado son, entonces, **3 tipos de
+mineral de alimentación + un efecto de la flotación**, no 4 minerales distintos.
+Se fija `K_TIPO_CABEZA = 3` en config, con la justificación escrita ahí; la regla
+automática de máxima estabilidad (que daría k=2) se imprime igual para que la
+diferencia quede visible y no escondida.
+
+### 17.2 Reporte de producción agosto-septiembre 2026
+
+Extraídos del PI los 18 tags de `docs/espesador_desc.txt` a 5 min (llegaron 16;
+faltan `x9`/`x10`, niveles de piscina) → `data/raw/esp_agosep_pi.csv`, 17 569
+registros, 2026-08-01 → 2026-10-01. Agregado a las 119 ventanas de 12 h con tipo
+de mineral. **El GMM se ajustó solo hasta 2026-05-31, así que este período es
+fuera de muestra para el clustering.**
+Código y figuras: `data4Espesadores/src/reporte_mineral_espesadores.py`,
+`reports/fig_esp_01..03` + `mineral_vs_espesadores_agosep.csv`.
+
+**Dos trampas encontradas y tratadas:**
+
+1. **La línea L2 estuvo fuera del 19 al 31 de agosto** (`y5` ≈ 1.00 = agua).
+   Agosto concentra 34 de las 41 ventanas Fe+Zn, así que sin enmascarar salía
+   "Fe+Zn baja la densidad a 1.06" como hallazgo — y era el equipo parado.
+2. **Confusión temporal:** agosto es Fe+Zn (34/41) y septiembre es Mo (45/68).
+   Todo se reporta **centrado por mes**, que es lo que vale.
+
+| variable | Cu (n=10) | Mo (n=68) | Fe+Zn (n=41) | p crudo | **p intra-mes** |
+|---|---|---|---|---|---|
+| **Nivel de interface (m)** | **1.872** | **2.167** | 2.129 | 0.031 | **0.0016 ✔** |
+| Nivel cajón distribuidor (%) | 63.5 | 57.9 | 58.0 | 0.154 | 0.0065 |
+| Flujo de ingreso (m³/h) | 1695 | 1449 | 1459 | 0.170 | 0.0086 |
+| Nivel tanque TK001 (%) | 34.4 | 44.6 | 38.5 | 0.009 | 0.0135 |
+| Nivel tanque TK002 (%) | 34.0 | 44.9 | 38.3 | 0.012 | 0.0148 |
+| BedMass (t) | 60.8 | 60.4 | 60.5 | 0.018 | 0.041 |
+| Densidad descarga L1 | 1.552 | 1.552 | 1.618 | 0.019 | 0.087 |
+| Torque de rastra (%) | 30.9 | 32.5 | 32.2 | 0.116 | 0.088 |
+| Flujo a piscinas (m³/h) | 1677 | 1761 | 1905 | 0.052 | 0.761 |
+| Flujo de floculante (m³/h) | 0.329 | 0.345 | 0.336 | 0.473 | 0.837 |
+
+**✔ = único que sobrevive Bonferroni** por las 10 variables probadas
+(umbral 0.005). El **nivel de interface** es el efecto robusto; el resto es
+sugerente. Y **el floculante no cambia** (p=0.84): la diferencia de interface no
+se explica por dosificación distinta.
+
+### 17.3 La interface como indicativo de recuperación de agua: depende de la escala
+
+El usuario plantea que el nivel de interface es directamente proporcional a la
+subida de los tanques temporales de agua, y por tanto indicativo de recuperación.
+**Medido, y la respuesta es que depende de la escala de tiempo:**
+
+```
+corr(interface, nivel TK001)      por HORA      +0.377
+corr(interface, SUBIDA de TK001)  por HORA      +0.070   <- la tasa no correlaciona
+corr(interface, flujo a piscinas) por HORA      -0.206   <- signo contrario
+corr(interface, nivel TK001)      por VENTANA DE 12 h   +0.525   <- se sostiene
+```
+
+**A escala de turno la relación se sostiene (r=+0.525)**, y el ordenamiento por
+tipo de mineral la acompaña: Mo tiene la interface más alta (2.17 m) **y** los
+tanques más altos (45 %); Cu la más baja (1.87 m) y los tanques más bajos (34 %).
+A escala horaria no se sostiene, y el flujo a piscinas incluso va al revés —
+esperable, porque ese flujo lo fija el bombeo, no la decantación.
+
+**RESUELTO por el usuario (misma fecha):** el nivel de interface es la **altura
+de agua clara por encima del material sedimentado**. No es la cama de sólidos,
+que es lo que se había supuesto al escribir el párrafo anterior. Con eso:
+
+- **interface alta = más agua clara = más recuperación de agua**, tal como
+  planteaba el usuario, y todos los signos medidos van en la dirección correcta;
+- la objeción física que se había levantado (*«interface alta implicaría menos
+  rebose»*) **era incorrecta** y queda retirada;
+- el flujo a piscinas (−0.206) **no contradice nada**: es una variable
+  **manipulada** por el bombeo, no una medida de recuperación. Para recuperación
+  hay que mirar el nivel de los tanques, que es lo que se acumula.
+
+**Consecuencia sobre el §11 histórico:** allí se concluyó que el relave tipo Fe
+*«decanta peor»* por tener +0.215 m de interface a igual floculante. **Es al
+revés: decanta mejor.** Corregido en el ADR correspondiente.
+
+### 17.4 Para el sistema experto
+
+Con estos datos, el único efecto defendible del tipo de mineral sobre la
+operación es el **nivel de interface** (p=0.0016 centrado por mes, fuera de
+muestra), con los tanques de agua acompañando.
+
+**Lectura con el signo ya confirmado** (interface = altura de agua clara):
+
+| régimen | agua clara | nivel TK001 | lectura |
+|---|---|---|---|
+| **Mo** | **2.17 m** | **45 %** | decanta mejor, **más agua recuperada** |
+| Fe+Zn | 2.13 m | 38 % | intermedio |
+| **Cu** | **1.87 m** | **34 %** | decanta peor, **menos agua recuperada** |
+
+Y **el floculante no cambia entre regímenes** (p=0.84): la planta **no está
+compensando** el cambio de mineral, lo está absorbiendo como menos recuperación
+de agua cuando entra mineral tipo Cu. Ahí está el margen del sistema experto:
+anticipar el régimen Cu y subir floculante antes de perder el agua, en vez de
+reaccionar. Es **una base para conmutar**, no
+una ley: Cu tiene n=10 ventanas y además corre con más flujo de ingreso
+(1695 vs 1449, p=0.0086), que es confusión por carga que estos dos meses no
+permiten separar.

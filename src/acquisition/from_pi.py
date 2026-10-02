@@ -98,6 +98,19 @@ def extraer_composito(desde: str = FECHA_INICIO_COMPOSITO, hasta: str | None = N
     return _a_ancho(largo, TAGS_COMPOSITO)
 
 
+def extraer_stream(tags: dict, desde: str = FECHA_INICIO_COMPOSITO,
+                   hasta: str | None = None, chunk_dias: float = 90) -> pd.DataFrame:
+    """Compósito de 12 h de cualquiera de los tres streams del courier de cobre.
+
+    Mismo protocolo que `extraer_composito` (que es el caso del concentrado):
+    `tags` es TAGS_CABEZA, TAGS_RELAVE o TAGS_COMPOSITO de config. Se separa en
+    su propia función para no romper la firma de `extraer_composito`, que ya
+    consumen la etapa 0 y el CLI.
+    """
+    hasta = hasta or pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    return _a_ancho(cliente().recorded(list(tags), desde, hasta, chunk_dias=chunk_dias), tags)
+
+
 def _main():
     ap = argparse.ArgumentParser(description="Adquisición desde PI OSIsoft (courier o compósito)")
     ap.add_argument("fuente", choices=["courier", "composito"])

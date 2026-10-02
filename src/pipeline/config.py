@@ -167,6 +167,41 @@ TAGS_COMPOSITO = {"7100AIP101MAN": "fe",                 # %Fe Promedio Concentr
 # Ver docs/bitacora_analisis.md seccion 2.6 y el hilo abierto 5.4.
 COL_TS_COMPOSITO = "ts"                                  # hora local naive, tal como la escribe la etapa 0
 
+# --- Compósito de CABEZA y de RELAVE (hallados el 2026-10-01, §15) ---
+# El mismo courier de cobre compone y ensaya tres streams, no solo el
+# concentrado: la alimentacion a flotacion (rebose de hidrociclones), el
+# concentrado colectivo y el relave final. Los tres compositos comparten la
+# grilla de 12 h (07:30 / 19:30) y la misma historia (2022-12-30 -> hoy), y los
+# tres se cortan ANTES de la etapa de rayos X, de modo que ninguno tiene una
+# lectura de intensidad que le corresponda (ver §12.1).
+# La CABEZA es la unica de las tres que trae %Zn; el concentrado trae %Ins.
+TAGS_CABEZA = {"7100AIP011MAN": "fe",                    # %Fe Promedio Rebose de hidrociclon Courier Cobre
+               "7100AIP012MAN": "cu",                    # %Cu Promedio Rebose de hidrociclon Courier Cobre
+               "7100AIP013MAN": "zn",                    # %Zn Promedio Rebose de hidrociclon Courier Cobre
+               "7100AIP014MAN": "mo"}                    # %Moly Promedio Rebose de hidrociclon Courier Cobre
+# OJO con el relave: el usuario advierte que la muestra de cola viene con mucha
+# dilucion de agua, asi que sus leyes ABSOLUTAS no son comparables entre si a lo
+# largo del tiempo. Caracterizar el relave por log-cocientes, nunca por valor
+# absoluto (misma razon que llevo a los log-cocientes en la etapa 2).
+TAGS_RELAVE = {"7100AIP031MAN": "fe",                    # %Fe Promedio Relave Final Courier Cobre
+               "7100AIP032MAN": "cu",                    # %Cu Promedio Relave Final Courier Cobre
+               "7100AIP034MAN": "mo"}                    # %Moly Promedio Relave Final Courier Cobre
+RAW_CABEZA = DATA_RAW / "composito_cabeza_pi.csv"        # crudo por fuente (regla de la etapa 0)
+RAW_RELAVE = DATA_RAW / "composito_relave_pi.csv"
+LIMPIO_CABEZA = DATA_PROCESSED / "cabeza_limpio.csv"
+LIMPIO_RELAVE = DATA_PROCESSED / "relave_limpio.csv"
+TIPOS_MINERAL = DATA_PROCESSED / "tipos_mineral.csv"     # salida de tipos_mineral.py (cabeza + relave)
+# k FIJADO por stream, no elegido automaticamente. La regla automatica (maxima
+# estabilidad ARI) daba k=2 en cabeza, pero k=2 fusiona Cu y Mo, que el ensayo
+# independiente de la mina distingue con p=1.4e-15, y la operacion necesita
+# separarlos para conmutar estrategia de control. Entre k=3 y k=4 (el rango que
+# la operacion espera) se elige k=3: en k=4 dos de los cuatro tipos son
+# indistinguibles para la mina (%Fe 3.360 vs 3.369) y el cuarto cae a 8.9% de las
+# ventanas. Con k=3 los tres tipos tienen firma propia en la mina: %Mo p=1.4e-15,
+# %Cu p=9.3e-07, %Fe p=1.1e-07, F05 p=5.9e-05. Ver §17 de la bitacora.
+K_TIPO_CABEZA = 3                                        # Cu / Mo / Fe+Zn
+K_TIPO_RELAVE = 3                                        # maxima estabilidad ARI (0.659); k=2 inestable (0.069)
+
 # --- Alineación intensidades <-> compósito ---
 VENTANA_COMPOSITO_H = 12                                 # ancho de la ventana centrada en el ensayo (= cadencia del lab)
 MIN_BLOQUES_VENTANA = 8                                  # mínimo de bloques de 30 min para aceptar la ventana

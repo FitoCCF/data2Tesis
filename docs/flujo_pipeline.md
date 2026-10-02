@@ -23,6 +23,11 @@ Fuente de verdad del código:
 
 Dos rutas de calibración que conviven, porque las dos fuentes de laboratorio son
 muestras físicamente distintas y cada ley se calibra con la que le conviene.
+Las dos salen del mismo courier, pero la puntual es el material que **sí** pasó
+por los rayos X (tiene su propia lectura de intensidad, de ahí el calce exacto
+por valor) y el compósito se corta **antes** del multiplexor (no tiene ninguna,
+de ahí que solo pueda alinearse promediando la estimación sobre su ventana).
+Ver `bitacora_analisis.md` §12.
 
 ```mermaid
 flowchart TB
@@ -32,8 +37,8 @@ flowchart TB
         PG[("Postgres works4cdp<br/>sample_id = 24")]
         PI[("PI System<br/>tags del courier")]
         INT["Intensidades del analizador<br/>n1fe n2cu n3zn n4mo n6sc<br/>~40k lecturas, 1 cada 22 min"]
-        GRAB["Laboratorio PUNTUAL<br/>works4cdp_assay<br/>pFe pCu pZn pMo pIns pOx pSol<br/>n = 314, toma manual 09-13 h"]
-        COMP["Laboratorio COMPOSITO 12 h<br/>tags 7100AIP101-104MAN<br/>cu fe mo<br/>n = 2590, turno dia 07:30 / noche 19:30<br/>cortado antes del multiplexor"]
+        GRAB["Laboratorio PUNTUAL<br/>works4cdp_assay<br/>pFe pCu pZn pMo pIns pOx pSol<br/>n = 365 con ley, lunes/miercoles/viernes<br/>toma manual 09-13 h (297) y 15-19 h (60)<br/>SI paso por los rayos X: tiene intensidad propia"]
+        COMP["Laboratorio COMPOSITO 12 h<br/>tags 7100AIP101-104MAN<br/>cu fe mo ins, sin Zn<br/>n = 2601, turno dia 07:30 / noche 19:30<br/>cortado antes del multiplexor<br/>NO tiene intensidad: se alinea por ventana centrada"]
         PG --> INT
         PG --> GRAB
         PI --> COMP
