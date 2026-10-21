@@ -885,13 +885,17 @@ Los tags `_296290_ConcFinal_*` son el `sample_id=24`: 125/125 muestras calzan,
   el PI la re-archiva cada 100 s (`ExcMax=100` en los 5 tags) → ~14 eventos
   por lectura. No es sensor congelado.
 - 35,925 eventos todo-0 (analizador detenido, 177 días) y 41 todo -9999.
-- `n6sc` archivado 1-60 s aparte de los metales, concentrado en mar-jul 2026
-  (pico 6,399 filas en mayo). A veces `n1fe` llega 1 s antes que el resto.
+- `n6sc` archivado 1-145 s aparte de los metales, concentrado en mar-jul 2026
+  (pico 6,399 **filas crudas** en mayo = 442 lecturas; 1,310 en total).
+  A veces `n1fe` llega 1 s antes que el resto.
   La 1a reconstruye: 25,429 lecturas hasta el 30-sep, 0 con metales incompletos.
+  → **Rehecho el 2026-10-21: los 5 canales son simultáneos y la fila parcial
+  no es una lectura. Ver §18; la 1a ahora da 25,427 lecturas.**
 
 ### 10.3 BD ↔ PI
-Calce por valor de los 4 metales redondeados: **125/125** desde 2025-07-13
-(las 18 "perdidas" de mar-jul eran lecturas partidas por `n6sc`). Hora BD
+Calce por valor de los 4 metales redondeados: **125/125** desde 2025-07-13.
+(Decía que las 18 "perdidas" de mar-jul eran lecturas partidas por `n6sc`:
+**ese número no es reproducible y el mecanismo no cierra** — ver §18.6.) Hora BD
 ~6 min detrás del inicio de la lectura en el PI (p95 28 min). **3 filas de
 jun-2026 con la hora corrida exactamente 12 h** (AM/PM en la BD). 4 `instance`
 duplicadas = misma lectura registrada con y sin leyes. `instance` no sirve de llave.
@@ -1680,3 +1684,162 @@ reaccionar. Es **una base para conmutar**, no
 una ley: Cu tiene n=10 ventanas y además corre con más flujo de ingreso
 (1695 vs 1449, p=0.0086), que es confusión por carga que estos dos meses no
 permiten separar.
+
+---
+
+## 18. Sesión 2026-10-21 — los 5 canales son simultáneos: rediseño de la etapa 1a
+
+Partió de una observación del operador sobre `courier_pi.csv` —"las
+intensidades de los metales y la del `n6sc` tienen el mismo timestamp"— y
+terminó rehaciendo la reconstrucción de lecturas del PI. Resultado neto: el
+pipeline queda correcto y **ninguna conclusión de la tesis se mueve**.
+
+### 18.1 El hecho del equipo, medido
+
+El courier mide los 5 canales en **una sola lectura**, no canal por canal.
+En modo automático el mínimo entre muestras es 2 min y rotan 10 líneas, así
+que el concentrado final toca cada ~20 min; con menos líneas en servicio el
+ciclo se acorta proporcionalmente. Verificado sobre los 413,834 eventos
+crudos hasta 2026-09-30:
+
+| medición | valor |
+|---|---|
+| instantes de cambio, por canal | `n1fe` 25,439 · `n2cu` 25,439 · `n3zn` 25,439 · `n4mo` 25,439 · `n6sc` 25,439 |
+| eventos agrupados | 25,179, **los 25,179 con los 5 canales** |
+| cambios de `n6sc` sin cambio de metales a < 10 min | **0** |
+| spread del evento (primer vs último canal) | p50 = 0 s · p99 = 3 s · max = 145 s |
+| intervalo entre lecturas | p50 = 20.9 min (p25 18.1, p75 25.5) |
+
+Los cinco canales tienen **exactamente** el mismo número de cambios, y en
+94.8 % de los eventos los 5 se archivan en el mismo segundo. No existe un
+solo caso en 15 meses donde el Sc se mueva y los metales no.
+
+**Consecuencia:** una fila del PI a la que le falta un canal **no es una
+lectura**. Es media lectura archivada aparte. El desfase está cuantizado
+(3, 4, 6-7, 14, 37-39, 63, 143-145 s) y cambia de signo: firma de un
+mecanismo de escritura del PI, no de medición. En 24 de los 25 eventos con
+spread > 3 s los 4 metales comparten el segundo exacto y el único corrido es
+`n6sc`; el caso restante (2026-08-16) es `n2cu` corrido 63 s.
+
+### 18.2 Los tres defectos de `limpiar_pi()`
+
+La función definía la lectura por los 4 metales y después pegaba `n6sc` con
+una ventana. Medido:
+
+1. **`TOL_N6SC = 60s` no alcanza.** En los 5 eventos con el Sc a 143-145 s,
+   el PI republica el Sc **viejo** en el hueco, así que el respaldo lo
+   agarra: 4 lecturas se quedaron con el Sc de la muestra anterior y 1 en
+   NaN.
+
+   | lectura | Sc asignado | Sc correcto |
+   |---|---|---|
+   | 2026-03-13 09:28:55 | 1455.16125 | 1444.49829 |
+   | 2026-03-16 02:25:51 | 1389.99792 | 1422.89038 |
+   | 2026-03-29 10:42:15 | NaN | 1458.50300 |
+   | 2026-04-01 18:29:23 | 1434.72253 | 1434.98645 |
+   | 2026-07-09 13:52:28 | 1346.33911 | 1321.69482 |
+
+2. **`TOL_EVENTO = 5s` agrupaba FILAS, no cambios de valor.** El PI archiva
+   seguido una lectura nueva a menos de 5 s de la última republicación de la
+   anterior; `agg(first)` se quedaba con la vieja y la nueva reaparecía en su
+   republicación siguiente, **fechada ~100 s tarde**. Son **1,201 lecturas
+   (4.7 %)**, no un caso aislado. Era invisible porque `sostenida_s` solo
+   llega a 0 cuando la lectura tenía una sola republicación (14 casos).
+
+3. **Una fila parcial podía fechar y valorizar una lectura.** Con `n2cu`
+   archivado 63 s aparte (2026-08-16 17:37:28) salía una fila mezclando el
+   `n2cu` nuevo con los otros tres arrastrados por `ffill` de la lectura
+   anterior: una lectura que nunca existió. 2 casos (el otro, 2026-07-31
+   11:48:21).
+
+### 18.3 `lecturas_por_evento()` — el rediseño
+
+Agrupa **instantes de cambio**, no filas, y trata los 5 canales por igual.
+El corte no es temporal sino **estructural**: como cada canal cambia una vez
+por lectura, ver dos veces el mismo canal significa que empezó otra. Eso
+separa los ciclos cortos reales (hay lecturas legítimas a 35 s) sin partir
+los eventos con 145 s de spread — algo que **ninguna tolerancia temporal
+única puede hacer**, porque los dos rangos se solapan.
+
+Una fila incompleta no se descarta: aporta sus canales al evento pero no
+fecha ni valoriza la lectura por sí sola. Aplicar la regla como *filtro de
+filas* en cambio cuesta 74,561 filas (18 %) y **1,290 lecturas**, justo las
+del período de desfase.
+
+Dos condiciones extra que el código viejo cumplía por accidente vía
+`TOL_EVENTO`: un "cambio" cuyo valor es el que el canal ya tiene en la
+lectura en curso, o el que tenía en la anterior, es **re-archivado** y no
+abre lectura. El PI a veces revierte al valor viejo 1 s después de publicar
+el nuevo y vuelve ~100 s más tarde (12 casos, p.ej. 2025-08-15 03:31:08 `Y` /
+03:31:09 `X` / 03:32:48 `Y`). Son 60 instantes descartados.
+
+### 18.4 El diff
+
+| | `limpiar_pi` | `lecturas_por_evento` |
+|---|---|---|
+| lecturas | 25,429 | 25,427 |
+| lecturas incompletas | 0 | 0 |
+| mismas 5 intensidades en ambos | — | 25,422 |
+| solo en el viejo | 7 (5 con Sc rancio + 2 quimeras) | — |
+| solo en el nuevo | — | 5 (las mismas con Sc correcto) |
+| hora corregida | — | 1,515 (de ellas 1,201 por −100 s) |
+| calce BD ↔ PI | 125/125 | 125/125 |
+
+Comparador reproducible: `notebooks/27_diff_reconstruccion_pi.py`.
+
+### 18.5 Impacto aguas abajo: ninguno
+
+Pipeline corrido completo (1a → 6) y `data/processed/` regenerado.
+
+- **Asignación de grupo: 25,846/25,846 idénticas (100.00 %).** Cero
+  reasignaciones.
+- Métricas de la etapa 5 contra las 18 muestras de test: pFe 0.253,
+  pCu 0.518, pMo 0.628, pZn 0.832 — iguales a §11.2.
+- `models/anomaly_detector.joblib` salió **byte-idéntico**.
+- 1c: 25,848 → 25,846 filas; anomalías 950 → 949; `validas_ley` 361 → 361.
+
+La razón: **`n6sc` ya no entra en ninguna feature.** Desde que se eliminó la
+ortogonalización (§10.6), el clustering usa log-cocientes entre metales y la
+regresión usa fracciones de cierre más `logSumI`, que suma `METALES` y no
+`CANALES` (`features.py:105`). El Sc no toca nada, y los metales cambiaron en
+una sola lectura de 25,422.
+
+Dicho de frente: esto fue **saneamiento de calidad de dato, no un hallazgo
+que cambie conclusiones**. Lo que gana es cualquier análisis futuro que **sí**
+use el tiempo —ventanas contra el compósito, lags, el corte train/test al
+segundo—: las 1,201 lecturas mal fechadas por 100 s sí habrían afectado un
+análisis de desfase temporal.
+
+### 18.6 Dos cifras que estaban mal en esta bitácora
+
+- **Las "18 muestras de la BD que no aparecen en el PI" (§10.3) no existen.**
+  Intenté reproducirlas con tres criterios de calce distintos: dos dan
+  125/125 y solo el más estricto (`dropna` sobre los 5 canales) falla, en
+  **5** muestras — 2026-04-15, 04-29, 05-15, 05-18 y 07-01, todas con el Sc
+  corrido 1-3 s. El commit que introdujo la frase (`b99d9f0`) es el mismo que
+  implementó la 1a, y el script de merge anterior solo concatenaba, así que
+  el diagnóstico pre-fix nunca se comiteó. **Además el mecanismo no cierra:**
+  en una fila partida los 4 metales están completos, así que el calce por
+  valor no se rompe. No usar ese número.
+- **`unificacion.py` decía 122/122** donde lo medido es 125/125. Corregido.
+- El "pico de 6,399 filas en mayo" (§10.2) son **filas crudas**, no lecturas:
+  a nivel de lectura son 442 en mayo y 1,310 en total.
+
+### 18.7 Lo que queda abierto, con número
+
+- **533 lecturas a < 10 min de la anterior (2.1 %).** No son artefacto: los
+  5 canales cambian en 531/533, y la magnitud del cambio es normal (mediana
+  1.3-2.2 % vs 1.54 % de las normales). Vienen en rachas —la más larga 75
+  lecturas en 5.7 h el 2026-06-12, con mediana 4.5 min— y el intervalo dentro
+  de las rachas está cuantizado en los 2 min por muestra (modo en 4-5 min ≈
+  2 líneas en el ciclo). **Son ciclos cortos reales**, no error.
+- **7 lecturas con una predecesora a 35-67 s** (antes 12; el rediseño
+  explicó 5). Con los 5 canales cambiando y `sostenida_s` normal. Por debajo
+  de los 2 min no hay configuración de líneas que lo produzca. Hipótesis a
+  zanjar con acceso al PI: el analizador emite un preliminar y un definitivo
+  del mismo ciclo, o el PI escribe y corrige. Son 2026-01-23 23:42:49,
+  2026-02-13 17:55:32, 2026-03-13 15:00:40, 2026-04-02 22:46:35,
+  2026-07-27 14:45:50, 2026-07-30 06:58:08, 2026-08-05 09:34:30.
+- **Una medición de señal baja**, no de archivado: 2026-04-02 22:45:34 con
+  `n1fe` 3,935 contra ~30,000 normal y el `n6sc` **subiendo** a 2,058 — celda
+  vacía o purga. La captura el IsolationForest de la 1c.

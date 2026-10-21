@@ -35,7 +35,7 @@
 import numpy as np
 import pandas as pd
 
-from .config import (COLS_BD, TAGS_COURIER, TOL_EVENTO, TOL_N6SC, UMBRAL_SOSTENIDA,
+from .config import (COLS_BD, TAGS_COURIER, TOL_EVENTO, TOL_N6SC, MAX_SPREAD, UMBRAL_SOSTENIDA,
                      Z_LEY_SOSPECHOSA, Z_CANAL_RESPALDO, CANAL_DE_LEY)
 
 CANALES_PI = list(TAGS_COURIER.values())                  # n1fe, n2cu, n3zn, n4mo, n6sc
@@ -261,3 +261,144 @@ def _main():
 
 if __name__ == "__main__":
     _main()
+
+
+# ============================================================
+# PI — reconstrucción por evento (rediseño del 2026-10-21)
+# ============================================================
+# Medido sobre los crudos hasta 2026-09-30 (docs/bitacora_analisis.md §18):
+# los 5 canales del courier cambian SIEMPRE juntos. Cada canal tiene
+# exactamente 25,439 instantes de cambio y los 25,179 eventos agrupados
+# tienen los 5 canales; no existe un solo caso en 15 meses donde n6sc se
+# mueva y los metales no. El courier mide los 5 canales en una sola lectura,
+# así que una fila del PI a la que le falta un canal NO es una lectura: es
+# media lectura archivada aparte.
+#
+# De ahí que limpiar_pi() —que define la lectura por los metales y después
+# pega n6sc con una ventana— tenga tres defectos medidos:
+#   1. TOL_N6SC=60s no alcanza para los 5 eventos con el Sc archivado a
+#      143-145 s: 4 lecturas se quedan con el Sc de la muestra ANTERIOR
+#      (republicado en el hueco) y 1 con NaN.
+#   2. TOL_EVENTO=5s agrupa FILAS por proximidad, así que cuando el PI
+#      archiva dos lecturas distintas a 1 s de distancia las fusiona y la
+#      segunda queda fechada ~100 s tarde (2025-07-15 16:25:18 -> 16:26:58,
+#      2025-09-15, 2026-02-08).
+#   3. Una fila parcial puede fechar y valorizar una lectura: con n2cu
+#      archivado 63 s aparte (2026-08-16) sale una fila que mezcla el n2cu
+#      nuevo con los otros tres arrastrados de la lectura anterior — una
+#      lectura que nunca existió.
+#
+# El rediseño agrupa INSTANTES DE CAMBIO, no filas, y trata los 5 canales
+# por igual. El corte de evento no es temporal sino estructural: como cada
+# canal cambia una vez por lectura, ver dos veces el mismo canal significa
+# que empezó otra lectura. Eso separa bien los ciclos cortos reales (hay
+# lecturas legítimas a 36 s de distancia, con la rotación en 2 líneas) sin
+# partir los eventos con 145 s de spread de archivado, cosa que ninguna
+# tolerancia temporal única puede hacer.
+
+
+def lecturas_por_evento(df: pd.DataFrame, max_spread: str = MAX_SPREAD,
+                        umbral_sostenida: str = UMBRAL_SOSTENIDA) -> tuple[pd.DataFrame, dict]:
+    """Eventos archivados del PI -> una fila por lectura real del courier.
+
+    1. -9999 y 0 pasan a NaN por canal; una fila sin ningún canal no es
+       medición. Una fila incompleta no se descarta: aporta sus canales al
+       evento, pero no fecha ni valoriza la lectura por sí sola.
+    2. Por canal, su instante de cambio sobre su PROPIA serie sin NaN (las
+       republicaciones no son cambios).
+    3. Los instantes se recorren en orden y se acumulan en un evento. Se
+       abre uno nuevo cuando el canal ya está en el evento en curso, o
+       cuando el evento ya abarca más de max_spread.
+    4. La lectura toma el PRIMER instante del evento como 'ts' y el valor
+       nuevo de cada canal. 'spread_s' = segundos entre el primer y el
+       último canal (0 en el 94.8% de los eventos); 'canales' = cuántos
+       cambiaron.
+
+    Retorna (lecturas, resumen).
+    """
+    df = df.sort_values("ts").reset_index(drop=True)
+    x = df[CANALES_PI]
+    r = {"eventos_crudos": len(df),
+         "eventos_todo_-9999": int((x == -9999).all(axis=1).sum()),
+         "eventos_todo_0": int((x == 0).all(axis=1).sum())}
+    x = x.mask((x == -9999) | (x == 0))
+    df = df.assign(**{c: x[c] for c in CANALES_PI})
+    df = df[df[CANALES_PI].notna().any(axis=1)].reset_index(drop=True)
+    r["eventos_sin_medicion"] = r["eventos_crudos"] - len(df)
+    r["filas_completas"] = int(df[CANALES_PI].notna().all(axis=1).sum())
+    r["filas_parciales"] = len(df) - r["filas_completas"]
+
+    # 2. instante de cambio por canal, sobre su propia serie
+    cambios = []
+    for c in CANALES_PI:
+        s = df[df[c].notna()][["ts", c]]
+        es_cambio = s[c].ne(s[c].shift())                 # la primera cuenta como cambio
+        cambios.append(pd.DataFrame({"ts": s.loc[es_cambio, "ts"], "canal": c,
+                                     "valor": s.loc[es_cambio, c]}))
+    cambios = pd.concat(cambios).sort_values(["ts", "canal"], kind="stable").reset_index(drop=True)
+    r["cambios_por_canal"] = {c: int(n) for c, n in cambios["canal"].value_counts().items()}
+
+    # 3. corte estructural: canal repetido -> nueva lectura, salvo re-archivado.
+    # El PI a veces republica el valor nuevo una segunda vez, o revierte al
+    # valor anterior 1 s despues de publicar el nuevo y vuelve ~100 s mas
+    # tarde (12 casos medidos, p.ej. 2025-08-15 03:31:08 Y / 03:31:09 X /
+    # 03:32:48 Y). Un "cambio" cuyo valor es el que el canal ya tiene en la
+    # lectura en curso, o el que tenia en la anterior, es archivado y no
+    # medicion: se descarta sin abrir lectura.
+    tope = pd.Timedelta(max_spread)
+    ts_v = cambios["ts"].to_numpy()
+    canal_v = cambios["canal"].to_numpy()
+    valor_v = cambios["valor"].to_numpy()
+    evento = np.full(len(cambios), -1, dtype=np.int64)
+    actual: dict[str, float] = {}        # valor del canal en la lectura en curso
+    anterior: dict[str, float] = {}      # ...y en la inmediatamente previa
+    e, vistos, t0, n_rearchivo = 0, set(), ts_v[0] if len(cambios) else None, 0
+    for i in range(len(cambios)):
+        c, val = canal_v[i], valor_v[i]
+        if c in vistos:
+            if val == actual.get(c) or val == anterior.get(c):
+                n_rearchivo += 1                      # re-archivado: no es lectura
+                continue
+            e += 1                                    # lectura nueva
+            anterior, actual = actual, dict(actual)
+            vistos, t0 = set(), ts_v[i]
+        elif (ts_v[i] - t0) > tope:
+            e += 1
+            anterior, actual = actual, dict(actual)
+            vistos, t0 = set(), ts_v[i]
+        vistos.add(c)
+        actual[c] = val
+        evento[i] = e
+    cambios["evento"] = evento
+    cambios = cambios[cambios["evento"] >= 0]
+    r["cambios_rearchivados"] = n_rearchivo
+
+    # 4. una fila por evento
+    lect = cambios.pivot_table(index="evento", columns="canal", values="valor", aggfunc="first")
+    lect = lect.reindex(columns=CANALES_PI)
+    t = cambios.pivot_table(index="evento", columns="canal", values="ts", aggfunc="first").reindex(columns=CANALES_PI)
+    lect.insert(0, "ts", t.min(axis=1))
+    lect["spread_s"] = (t.max(axis=1) - t.min(axis=1)).dt.total_seconds()
+    lect["canales"] = cambios.groupby("evento")["canal"].nunique()
+    lect = lect.sort_values("ts").reset_index(drop=True)
+
+    # 'sostenida_s': hasta cuándo el PI siguió republicando esta lectura
+    asign = pd.merge_asof(df[["ts"]], lect[["ts"]].rename(columns={"ts": "ts_lect"}),
+                          left_on="ts", right_on="ts_lect", direction="backward")
+    ultimo = asign.groupby("ts_lect")["ts"].max()
+    lect["sostenida_s"] = (lect["ts"].map(ultimo) - lect["ts"]).dt.total_seconds()
+    lect["sostenida"] = lect["sostenida_s"] > pd.Timedelta(umbral_sostenida).total_seconds()
+
+    # compatibilidad con la etapa 1b mientras conviva con limpiar_pi()
+    lect["n6sc_desfase_s"] = (t["n6sc"] - lect["ts"]).to_numpy() / np.timedelta64(1, "s")
+    lect["n6sc_desfasado"] = lect["n6sc_desfase_s"].fillna(0).ne(0)
+
+    lect = lect[["ts"] + CANALES_PI + ["spread_s", "canales", "sostenida_s", "sostenida",
+                                       "n6sc_desfase_s", "n6sc_desfasado"]]
+    r.update({"lecturas": len(lect),
+              "lecturas_incompletas": int(lect["canales"].lt(5).sum()),
+              "spread_s_p99": float(lect["spread_s"].quantile(0.99)),
+              "spread_s_max": float(lect["spread_s"].max()),
+              "lecturas_con_spread": int(lect["spread_s"].gt(0).sum()),
+              "lecturas_sostenidas": int(lect["sostenida"].sum())})
+    return lect, r

@@ -9,8 +9,13 @@
 #   courier_bd.csv   -> courier_bd_limpio.csv    leyes en 0 -> NaN, duplicados unidos
 #   composito_pi.csv -> composito_limpio.csv
 #
-# No borra filas por un campo malo: marca con banderas (sostenida,
-# n6sc_desfasado, leyes_sospechosas) y la decisión queda para después.
+# No borra filas por un campo malo: marca con banderas (sostenida, spread_s,
+# leyes_sospechosas) y la decisión queda para después.
+#
+# El PI se reconstruye por EVENTO (lecturas_por_evento, rediseño del
+# 2026-10-21): los 5 canales del courier cambian siempre juntos, así que una
+# fila a la que le falta un canal no es una lectura y no puede fecharla ni
+# valorizarla sola -- sus canales se juntan con los del resto del evento.
 #
 #   pixi run python notebooks/01a_limpieza_fuentes.py
 #   pixi run python notebooks/01a_limpieza_fuentes.py --fuentes pi
@@ -25,14 +30,14 @@ import pandas as pd
 
 from src.pipeline.config import (RAW_COURIER_PI, RAW_COURIER_BD, RAW_COMPOSITO,
                                  LIMPIO_COURIER_PI, LIMPIO_COURIER_BD, LIMPIO_COMPOSITO)
-from src.pipeline.limpieza_fuentes import limpiar_pi, limpiar_bd, limpiar_composito
+from src.pipeline.limpieza_fuentes import lecturas_por_evento, limpiar_bd, limpiar_composito
 
 _ap = argparse.ArgumentParser(add_help=False)
 _ap.add_argument('--fuentes', nargs='+', choices=['bd', 'pi', 'composito'], default=['bd', 'pi', 'composito'])
 args, _ = _ap.parse_known_args()
 
 tareas = {'bd': (limpiar_bd, RAW_COURIER_BD, LIMPIO_COURIER_BD, None),
-          'pi': (limpiar_pi, RAW_COURIER_PI, LIMPIO_COURIER_PI, ['ts']),
+          'pi': (lecturas_por_evento, RAW_COURIER_PI, LIMPIO_COURIER_PI, ['ts']),
           'composito': (limpiar_composito, RAW_COMPOSITO, LIMPIO_COMPOSITO, ['ts'])}
 
 for nombre in args.fuentes:

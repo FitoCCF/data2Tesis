@@ -69,8 +69,7 @@ aparecen caen todas en 2026-03-23 .. 2026-07-01. Por eso:
   las colapsa a una fila por lectura (~23,600 hasta agosto).
 - Concatenar A y B duplica lecturas. La unificación (etapa 1b) pega las
   leyes de A a la lectura de B que calza por valor de los 4 metales: con las
-  lecturas ya reconstruidas en la 1a calzan **122/122**, `n6sc` incluido (las
-  18 que no calzaban eran lecturas partidas por el desfase de `n6sc`). La
+  lecturas ya reconstruidas en la 1a calzan **125/125**, `n6sc` incluido. La
   hora de la BD va ~6 min detrás del inicio de la lectura en el PI, y 3 filas
   de jun-2026 están corridas exactamente 12 h (error AM/PM en la BD).
 
@@ -111,7 +110,7 @@ se subieron a propósito con `git add -f`.
 | `extractor.py` | `ExtractorBD`: una sola consulta, armada desde los grupos de columnas de `config.COLS_BD`, con el filtro de fechas en SQL |
 | **`src/pipeline/`** | **Las etapas, cada una con función reutilizable + CLI propio** |
 | `config.py` | Rutas, tabla y columnas de la BD (`COLS_BD`), tags del compósito PI y todas las constantes. Un solo lugar que editar |
-| `limpieza_fuentes.py` | **Etapa 1a.** Limpieza determinista por fuente: PI -> una fila por lectura real (colapsa republicaciones, reconstruye lecturas partidas, banderas `sostenida`/`n6sc_desfasado`); BD -> une `instance` duplicadas, ley en 0 -> NaN, bandera `leyes_sospechosas`; compósito -> orden y duplicados |
+| `limpieza_fuentes.py` | **Etapa 1a.** Limpieza determinista por fuente: PI -> `lecturas_por_evento()` da una fila por lectura real agrupando **instantes de cambio** de los 5 canales, que el courier mide juntos (corte estructural: canal repetido = lectura nueva; una fila incompleta aporta canales pero no fecha ni valoriza), banderas `spread_s`/`canales`/`sostenida`; BD -> une `instance` duplicadas, ley en 0 -> NaN, bandera `leyes_sospechosas`; compósito -> orden y duplicados. `limpiar_pi()` es la versión anterior, conservada para reproducir el diff (ver bitácora §18) |
 | `unificacion.py` | **Etapa 1b.** Tabla maestra A + B: pega cada muestra de la BD a su lectura del PI por calce de valor de los 4 metales (no por hora); columna `fuente` = `pi`/`ambos`/`bd` |
 | `limpieza.py` | **Etapa 1c.** Sobre la tabla maestra: banderas `congelada`, `anomalia` (IsolationForest sobre fracciones de cierre, ajustado solo hasta `FECHA_CORTE_TRAIN`), `valida` y `periodo` (train/test). No borra filas |
 | `escalado.py` | **Etapa 3.** StandardScaler de los 3 log-cocientes (columnas `_z`), ajustado solo con `train & valida`. Sin Yeo-Johnson |
@@ -195,7 +194,7 @@ llaman a `src/`.
 
 | Archivo | Qué es |
 |---|---|
-| `courier_pi_lecturas.csv` | Etapa 1a: una fila por lectura real del courier (~23,600 hasta agosto) + `sostenida_s`, `sostenida`, `n6sc_desfase_s`, `n6sc_desfasado` |
+| `courier_pi_lecturas.csv` | Etapa 1a: una fila por lectura real del courier (25,427 hasta 2026-09-30) + `spread_s` (segundos entre el primer y el último canal archivado del evento), `canales`, `sostenida_s`, `sostenida` |
 | `courier_bd_limpio.csv` | Etapa 1a: BD con `ts`, leyes en 0 -> NaN, `instance_duplicada`, `leyes_sospechosas` |
 | `composito_limpio.csv` | Etapa 1a: compósito ordenado, sin duplicados |
 | `courier_clusterizado.csv` | Etapa 4: + `grupo_id`, `grupo` (nombre), `prob_grupo`, para train, test y producción |

@@ -9,9 +9,9 @@
 #
 # Calce por VALOR, no por hora ni por instance: los 4 metales redondeados a
 # entero (la BD los guarda enteros) identifican la lectura. Medido el
-# 2026-09-30 sobre las lecturas de la etapa 1a: 122/122 muestras de la BD
+# 2026-10-21 sobre las lecturas de la etapa 1a: 125/125 muestras de la BD
 # desde 2025-07-13 calzan con exactamente una lectura del PI, y n6sc también
-# coincide en las 122. La hora de la BD va una mediana de ~6 min detrás del
+# coincide en las 125. La hora de la BD va una mediana de ~6 min detrás del
 # inicio de la lectura en el PI (p95 28 min), y 3 filas de jun-2026 están
 # corridas exactamente 12 h (error AM/PM en la BD): para eso la ventana.
 #
@@ -37,7 +37,8 @@ METALES = ["n1fe", "n2cu", "n3zn", "n4mo"]
 CANALES = METALES + ["n6sc"]
 LEYES = COLS_BD["leyes"]
 COLS_BD_EXTRA = ["instance", "instance_duplicada", "leyes_sospechosas", "motivo_sospecha"]
-COLS_PI_EXTRA = ["sostenida_s", "sostenida", "n6sc_desfase_s", "n6sc_desfasado"]
+COLS_PI_EXTRA = ["sostenida_s", "sostenida", "spread_s", "canales",
+                 "n6sc_desfase_s", "n6sc_desfasado"]
 
 
 def _llave(df: pd.DataFrame) -> pd.Series:

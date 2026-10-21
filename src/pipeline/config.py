@@ -57,6 +57,7 @@ LIMPIO_COURIER_BD = DATA_PROCESSED / "courier_bd_limpio.csv"
 LIMPIO_COMPOSITO = DATA_PROCESSED / "composito_limpio.csv"
 TOL_EVENTO = "5s"             # eventos de metales a <= esto son el mismo ciclo (a veces n1fe llega 1 s antes)
 TOL_N6SC = "60s"              # ventana para pegar n6sc a la lectura de los metales (solo actúa en filas partidas)
+MAX_SPREAD = "300s"           # tope del spread de archivado de un evento (medido: max 145 s) -- src/pipeline/limpieza_fuentes.lecturas_por_evento
 UMBRAL_SOSTENIDA = "2h"       # lectura republicada más de esto -> bandera 'sostenida' (p99 normal: 33 min)
 Z_LEY_SOSPECHOSA = 5.0        # |ley - mediana| / (1.4826·MAD) por encima -> candidata a bandera, no borrado
 Z_CANAL_RESPALDO = 2.0        # ...salvo que su canal del courier también se desvíe > esto en la misma dirección

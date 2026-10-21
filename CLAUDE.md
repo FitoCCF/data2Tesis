@@ -27,7 +27,7 @@ circuito, orden escalado/ortogonalización) que no se sostuvieron.
 
 ```
 00_getdata            crudos por fuente: courier_bd / courier_pi (recorded) / composito_pi
-01a_limpieza_fuentes  PI -> una fila por lectura real; BD -> leyes 0 = NaN, duplicados unidos
+01a_limpieza_fuentes  PI -> una fila por lectura real (por evento, 5 canales juntos); BD -> leyes 0 = NaN, duplicados unidos
 01b_unificacion       tabla maestra: BD pegada al PI por VALOR de los 4 metales (fuente pi/ambos/bd)
 01c_limpieza          periodo (train <= FECHA_CORTE_TRAIN / test / produccion), anomalia, valida, valida_ley
 02_features           log-cocientes vs Cu (clustering) + fracciones y logSumI (regresión) + dil
@@ -58,6 +58,18 @@ interfaz antigua (ortogonalización, `EstimadorHibrido`).
   y el PI la re-archiva cada 100 s (`ExcMax=100`): ~14 eventos por lectura,
   no un sensor congelado — la etapa 1a (`limpieza_fuentes.py`) las colapsa. El token del PI va
   en `PI_TOKEN` o `~/.pi_token`, nunca en el código.
+- **Los 5 canales del courier se miden JUNTOS (medido el 2026-10-21, §18).**
+  Cada canal tiene exactamente 25,439 instantes de cambio y los 25,179 eventos
+  agrupados tienen los 5; cero casos en 15 meses donde `n6sc` se mueva y los
+  metales no. Por eso **una fila del PI a la que le falta un canal no es una
+  lectura**: es media lectura archivada aparte, y el desfase (p99 = 3 s,
+  max 145 s, cuantizado y con signo variable) es del PI, no del equipo.
+  La 1a reconstruye por evento (`lecturas_por_evento`): agrupa instantes de
+  cambio, no filas, y corta cuando un canal se repite. **No volver a agrupar
+  filas por proximidad temporal** (`TOL_EVENTO`): fechaba 1,201 lecturas 100 s
+  tarde. En modo automático el mínimo entre muestras es 2 min y rotan 10
+  líneas (~20 min para el concentrado final); con menos líneas el ciclo se
+  acorta, y de ahí las lecturas legítimas a 4-5 min.
 - **El courier expone MUCHO más que el concentrado (hallado el 2026-10-01, §15).**
   El PI tiene **66 tags `_296290_*Canal*`** con los 5 canales de intensidad de
   *cada* línea de ambos couriers (`RebHidroL1/L2`, `ConcPrimL1/L2`,
