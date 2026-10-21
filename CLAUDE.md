@@ -70,6 +70,51 @@ interfaz antigua (ortogonalización, `EstimadorHibrido`).
   tarde. En modo automático el mínimo entre muestras es 2 min y rotan 10
   líneas (~20 min para el concentrado final); con menos líneas el ciclo se
   acorta, y de ahí las lecturas legítimas a 4-5 min.
+- **NOVIEMBRE 2025 ES LÍMITE DE INSTRUMENTO (confirmado con planta, §19).**
+  Hubo mantenimiento y después una campaña de muestreo para rehacer las
+  ecuaciones del Outocal. Las intensidades de antes y después **no son la misma
+  medición**: los cocientes entre canales se movieron −15.1 % a +14.1 %, y una
+  ganancia común (dilución, decaimiento de fuente) no puede cambiar cocientes.
+  El escalón de `n6sc` es de un día, −18.9 % el 2025-12-10; las fechas por canal
+  están escalonadas (n1fe ~2025-11-30). **Toda ventana de análisis se define
+  dentro de una época**; un modelo que atraviese la fecha lleva indicador de
+  época. Ventanas limpias: `2025-07-13 → 2025-11-30` y `2025-12-15 → hoy`.
+  Para Mo las dos se pueden juntar **con offset** (pendientes 1.9945 y 1.9520,
+  salto p=0.203): `scripts/comparar_epocas_mo.py`.
+- **El concentrado NO tiene grupos de mineral: tiene un GRADIENTE de Mo (§19).**
+  `lr_mo_cu` explica R² 0.667 (pre) y 0.769 (post) del %Mo del compósito **sin
+  ajustar un parámetro**, y **ninguna etiqueta discreta le gana con ningún k en
+  ninguna de las dos ventanas** (0.486-0.620). Los 4 grupos de la etapa 4 son
+  rebanadas arbitrarias de ese gradiente. **No volver a buscar grupos en el
+  concentrado**: silhouette ≤ 0.31 en todo k y algoritmo, HDBSCAN da 100 % de
+  ruido en la ventana pre, el histograma de `lr_mo_cu` tiene una sola joroba, y
+  el autoencoder no es reproducible entre semillas. Reproducible con
+  `notebooks/29_clustering_post_mantenimiento.py --desde X --hasta Y`.
+- **Trampa específica de este problema: las métricas internas premian el
+  artefacto.** El silhouette da 0.25-0.31 a la partición por **dilución** y
+  0.07-0.16 a la de **composición**, porque mide distancias en el espacio crudo
+  donde la magnitud domina la varianza. Elegir k o algoritmo por silhouette acá
+  lleva derecho a la respuesta equivocada. Las únicas métricas que apuntaron
+  bien fueron la **validación externa contra el compósito** (524 ventanas, 8×
+  las muestras de la BD) y el **control de época** (`AMI_mes`).
+- **La deriva de la magnitud son TRES causas, no una (§19; corrige §2.3).**
+  Dilución de la muestra (dominante: R² 0.221 → 0.696 al entrar `pSol`,
+  t=+19.6, ~1 % de intensidad por punto de %sólido), el escalón de
+  recalibración, y decaimiento de fuente de **−2.7 %/año** que sobrevive
+  controlando química **y** sólido. `pSol` cae ~2 puntos/año y eso **no** lo
+  explica la química (hipótesis de planta: líneas de agua contra espuma y
+  atoro; no demostrable, no hay tag de densidad en la línea de concentrado
+  final). `scripts/diagnostico_deriva_intensidades.py`.
+- **La invarianza a la dilución es física del canal, no una corrección.** El
+  agua absorbe según la energía (~E⁻³): `lr_zn_cu` (Zn 8.64 ≈ Cu 8.05 keV) es
+  invariante y `lr_fe_cu` (+0.519) / `lr_mo_cu` (−0.278) no pueden serlo, con
+  los signos que predice la física. El techo de la corrección actual (0.91 →
+  0.73 sd) es ese. Dentro de época el proxy es **mejor** que el +0.659 global de
+  §2.4: `corr(logSumI, pSol)` centrado por mes da +0.840 (pre) y +0.684 (post).
+- **Defecto abierto en la etapa 3:** `dil = logSumI − EWMA(90 d)` atraviesa la
+  ventana de recalibración de nov-2025 a ene-2026 y durante ~3 meses absorbe el
+  escalón como si fuera dilución. Esto **sí mueve resultados**: `dil` escala
+  Fe/Cu. El decaimiento de −2.7 %/año sí lo maneja una EWMA; el escalón no.
 - **El courier expone MUCHO más que el concentrado (hallado el 2026-10-01, §15).**
   El PI tiene **66 tags `_296290_*Canal*`** con los 5 canales de intensidad de
   *cada* línea de ambos couriers (`RebHidroL1/L2`, `ConcPrimL1/L2`,

@@ -1843,3 +1843,226 @@ análisis de desfase temporal.
 - **Una medición de señal baja**, no de archivado: 2026-04-02 22:45:34 con
   `n1fe` 3,935 contra ~30,000 normal y el `n6sc` **subiendo** a 2,058 — celda
   vacía o purga. La captura el IsolationForest de la 1c.
+
+---
+
+## 19. Sesión 2026-10-21 (2) — noviembre 2025 es límite de instrumento, y el Mo es un gradiente
+
+Encargo: agrupar con intensidades crudas, sin correcciones, probando varios
+algoritmos y métricas de validación. Terminó separando la deriva de la
+magnitud en tres causas y cerrando la pregunta de los grupos de mineral en el
+concentrado. **Dos resultados nuevos y un negativo replicado.**
+
+Reproducible con:
+`notebooks/28_experimento_clustering_intensidades_crudas.py`,
+`notebooks/29_clustering_post_mantenimiento.py --desde X --hasta Y`,
+`scripts/diagnostico_deriva_intensidades.py`, `scripts/comparar_epocas_mo.py`.
+
+### 19.1 Lo que confirmó planta
+
+Tres hechos, aportados por el usuario, que convierten hallazgos estadísticos
+en hechos documentados:
+
+- **El mantenimiento de noviembre 2025 existió**, y después se hizo una
+  **campaña de muestreo nueva para rehacer las ecuaciones del Outocal**. Esa
+  secuencia —mantenimiento, luego recalibración con muestras nuevas— es lo que
+  se hace cuando la respuesta física cambió lo bastante para invalidar las
+  ecuaciones viejas.
+- **El insoluble no tiene canal físico de medición.** No hay hardware: lo que
+  hay es estimación, y lo único real es el ensayo del laboratorio químico.
+- **No existe tag de densidad en la línea de concentrado final.**
+
+### 19.2 La deriva de la magnitud son TRES causas, no una
+
+§2.3 tenía registrada una "deriva relativa entre trimestres de 22-25 %"
+atribuida a decaimiento de fuente. Separadas (solo período pre-recalibración,
+n=253, `logSumI ~ química + pSol + tiempo`):
+
+| causa | tamaño | evidencia |
+|---|---|---|
+| **dilución de la muestra** | dominante: R² 0.221 → **0.696** al entrar `pSol`; +0.0104 de `logSumI` por punto de %sólido (~1 % de intensidad) | `pSol` t=+19.62 |
+| **recalibración por canal** | escalón de −22 % a +4 % según canal, nov-2025 a dic-2025 | los cocientes entre canales se movieron −15.1 % a +14.1 %; una ganancia común no puede hacerlo |
+| **decaimiento de fuente** | **−2.7 %/año**, constante | sobrevive controlando química *y* `pSol`: t=−6.01, p=6.7e-09 |
+
+El escalón del `n6sc` es de un día (mediana diaria 1781 → 1503 → 1438 entre el
+2025-12-09 y el 2025-12-11) y −18.9 %. Las fechas por canal están
+**escalonadas** (n1fe ~2025-11-30, n6sc 2025-12-10), consistente con calibrar
+canal por canal; `n3zn` y `n4mo` son demasiado ruidosos para fechar.
+
+**La hipótesis de planta —líneas de agua agregadas contra espuma y atoro—
+sobrevive el control de química**: `pSol ~ química + tiempo` deja el tiempo en
+−2.00 puntos/año (p=1.6e-07) y manda todos los coeficientes de química a no
+significativos (`pIns` de −0.33 a +0.02). O sea: el mineral cambió **y además**
+la muestra se diluyó, son dos tendencias independientes. Sin tag de densidad no
+hay forma de comprobarlo de modo independiente, así que queda **sostenida, no
+demostrada**.
+
+**Corrección a un dato de esta misma sesión:** la caída de `pSol` **no es
+monótona**. Por trimestre: 2022Q4 25.3 · 2023Q2 24.7 · **2023Q3 31.0** ·
+2023Q4 30.0 · 2024Q2 27.9 · 2025Q2 23.9 · 2026Q1 20.5 · 2026Q3 16.4. Hay un
+máximo en 2023H2 y la caída arranca en 2024.
+
+### 19.3 La invarianza a la dilución es física del canal, no una corrección
+
+El agua absorbe los rayos X según la energía (~E⁻³), así que un cociente entre
+canales de energía **parecida** es invariante a la dilución y uno entre
+energías distintas no puede serlo. Los signos lo confirman:
+
+```
+feature     |dE| vs Cu   corr(.,pSol)   centrado por mes
+logSumI              -         +0.721            +0.738
+lr_zn_cu          0.59         -0.230            -0.216
+lr_fe_cu          1.65         +0.519            +0.438
+lr_mo_cu          9.43         -0.278            -0.215
+```
+
+Fe (6.40 keV) se absorbe **más** que Cu (8.05) → signo positivo. Mo (17.48) se
+absorbe **menos** → negativo. Zn (8.64) ≈ Cu → §10.7 ya lo midió en t=−1.3
+controlando química, o sea **cero**. `lr_zn_cu` es el invariante por
+construcción; `lr_fe_cu` y `lr_mo_cu` no pueden serlo, y el techo de la
+corrección actual (0.91 → 0.73 sd) es ese.
+
+Y **dentro de época el proxy es mejor que el +0.659 global de §2.4**:
+`corr(logSumI, pSol)` centrado por mes da **+0.840** (pre) y **+0.684**
+(post). Lo degradaba mezclar épocas de calibración.
+
+### 19.4 El k=2 de los 15 meses es la recalibración; dentro de época, la dilución
+
+Siete algoritmos × k=2..8 más HDBSCAN sobre las 5 intensidades crudas
+(18,596 lecturas de train, escalado ajustado solo en train):
+
+- **Unanimidad en k=2**: silhouette 0.32-0.33 y estabilidad ARI 0.96-1.00 en
+  KMeans, GMM, Ward, Spectral y SOM; HDBSCAN da 2 grupos con
+  `min_cluster_size` 100, 300 y 1000. Hopkins 0.940.
+- **Y ese k=2 es un calendario**: grupo 1 al 92-99 % hasta 2025-11, 21 % en
+  2025-12, 0-10 % desde 2026-01. Las leyes del laboratorio son iguales en los
+  dos grupos (pFe 28.28/28.25, pZn 0.17/0.17), `eta²` ≈ 0.
+- **Dentro de cada época**, en cambio, el k=2 separa **sólido medido**:
+  centrado por mes, +2.17 vs −2.58 (p=0.0009) en pre y +0.79 vs −1.92
+  (p=0.0220) en post. Esos sí son los dos niveles de dilución.
+
+### 19.5 El autoencoder no es reproducible, y el patrón de su fallo es el hallazgo
+
+Un MLP 5-3-2-3-5 entrenado X→X (sin `torch` en el entorno) separa por su
+cuenta magnitud de composición: una unidad del cuello queda con |corr| 0.73-0.97
+contra `logSumI` y la otra con los log-cocientes. Redescubre lo que el alr
+impone por construcción. Pero **la partición no se sostiene entre semillas**:
+
+| ventana | k=2 | k=3 | k=4 |
+|---|---|---|---|
+| 15 meses (notebook 28), ARI mediano | — | +0.176 | +0.230 |
+| pre (notebook 29), ARI mediano | +0.120 | +0.340 | +0.389 |
+| post (notebook 29), ARI mediano | −0.002 | +0.284 | +0.274 |
+
+Y **el MSE no indica qué semilla salió bien**. En los 15 meses (notebook 28,
+k=4) la semilla 33 tiene el **mejor** MSE de las ocho (0.236) y el peor
+comportamiento (`eta²` 0.046, `AMI_mes` 0.377), mientras la 13 con MSE 0.239 da
+`eta²` 0.205 y `AMI_mes` 0.077. En la ventana post pasa lo mismo: las semillas
+42 y 7 dan `c_mo` 0.532 y 0.526 y la 1 da 0.013. Elegir semilla por `eta²`
+sería usar las leyes del laboratorio para escoger un modelo no supervisado.
+
+**Pero 5 de 8 semillas dan `c_mo` entre 0.48 y 0.64 con ARI de 0.25 entre
+ellas**: encuentran el mismo eje y lo cortan en lugares distintos. Eso solo
+pasa con un gradiente.
+
+### 19.6 El Mo es un GRADIENTE, no grupos — replicado en dos épocas
+
+Prueba decisiva: la variable continua contra la etiqueta discreta, sobre el
+compósito y en las dos ventanas.
+
+```
+                              pre (jul-nov 2025)    post (dic 2025-sep 2026)
+compositos usables                      243                     524
+corr(lr_mo_cu, mo)                   +0.816                  +0.877
+R2 CONTINUA                           0.667                   0.769
+Spearman                             +0.917                  +0.903
+
+R2 de la etiqueta discreta (mejor semilla del AE), mismo Mo:
+  k=2                                 0.486                   0.543
+  k=3                                 0.547                   0.552
+  k=4                                 0.529                   0.599
+  k=6                                 0.582                   0.610
+  k=8                                 0.620 (post) / 0.587 (pre)
+```
+
+**Ninguna partición, con ningún k, en ninguna de las dos ventanas, le gana a la
+variable continua.** Discretizar cuesta 0.15-0.23 de R². Y `lr_mo_cu` no ajusta
+ningún parámetro: ese 0.77 no tiene nada que sobreajustar.
+
+Cinco líneas de evidencia convergentes, cada una replicada:
+
+| observación | implica |
+|---|---|
+| la continua gana a toda etiqueta | discretizar destruye información |
+| ARI entre semillas 0.25 con `c_mo` similar | el corte es arbitrario |
+| silhouette ≤ 0.31 en todo k y algoritmo | no hay grupos separados |
+| HDBSCAN: 100 % ruido en pre; 38.8 % y nada con `mcs`≥300 en post | no hay densidades separadas |
+| el histograma de `lr_mo_cu` tiene **una** joroba, sin valles | es un continuo |
+
+**Fe, Cu e insoluble: nada por esta vía, en las dos ventanas.** `lr_fe_cu` vs
+`fe` R²=0.069; vs `cu` R²=0.092 (post) y 0.206 (pre); vs `ins` R²=0.000.
+`c_cu` y `c_ins` ≤ 0.07 en todas las combinaciones. Coherente con 19.1: el
+insoluble no tiene canal.
+
+### 19.7 Las dos épocas se pueden juntar para Mo, con offset
+
+```
+regresión  mo ~ lr_mo_cu  por época
+  pre : pendiente +1.9945  intercepto +7.0442  R2 0.669  RMSE 0.4809
+  post: pendiente +1.9520  intercepto +6.7346  R2 0.769  RMSE 0.3449
+
+modelo conjunto con dummy e interacción
+  post (salto)                  -0.3097  p=0.203     <- no significativo
+  lr_mo_cu x post (pendiente)   -0.0425  p=0.641     <- no significativo
+
+validación cruzada de época
+  ajuste en pre  -> post: R2 +0.692  sesgo +0.199
+  ajuste en post -> pre : R2 +0.613  sesgo -0.196
+```
+
+El salto estimado **coincide con lo que predice la recalibración medida
+aparte**: el cociente `n4mo/n2cu` cambió +14.1 %, o sea `lr_mo_cu` se corrió
+log(1.141)=+0.132, que por la pendiente 1.95 da −0.257 de intercepto; medido,
+−0.31. Dos mediciones independientes que se encuentran.
+
+**Recomendación: juntar las épocas con offset de época.** Un parámetro, y
+elimina el sesgo de ±0.20 que se ve en la predicción cruzada.
+
+### 19.8 Lo que esto explica hacia atrás
+
+Da el mecanismo de cuatro resultados que el proyecto tenía medidos sin
+explicación:
+
+- **Silhouette bajo 0.3 en todo k** (§10.8): un continuo no tiene grupos.
+- **Ningún modelo local pasó nunca el control aleatorio** (ADR 2026-09-30): los
+  grupos son rebanadas arbitrarias de un gradiente, así que un modelo por grupo
+  ajusta ruido. No era falta de muestras.
+- **Solo el Mo es defendible**: es el único con gradiente fuerte.
+- **Las métricas internas engañan en este problema**: premian la partición por
+  dilución (silhouette 0.25-0.31) y castigan la de composición (0.07-0.16),
+  porque miden distancias en el espacio crudo donde la magnitud domina la
+  varianza. Las únicas que apuntaron bien fueron la validación externa contra
+  el compósito y el control de época.
+
+### 19.9 Consecuencias y abiertos
+
+- **Defecto a corregir en la etapa 3:** `dil = logSumI − EWMA(90 d)` atraviesa
+  la ventana de recalibración de nov-2025 a ene-2026, así que durante ~3 meses
+  absorbe un escalón de instrumento como si fuera dilución. El decaimiento de
+  −2.7 %/año sí lo maneja una EWMA; el escalón no. Esto **sí mueve resultados**:
+  `dil` escala Fe/Cu.
+- **Para el sistema experto (objetivo 2):** la variable no es una etiqueta de
+  grupo con histéresis, es `lr_mo_cu` suavizado con EWMA (half-life 1-2 días,
+  §13) con umbrales sobre el valor continuo. El umbral lo fija metalurgia según
+  a partir de qué %Mo conviene conmutar: no es algo que el clustering descubra.
+- **Lo de mayor valor sin usar: la campaña del Outocal.** No está en
+  `works4cdp_assay` — el muestreo sigue plano en 5-13 por mes sin ningún pico
+  tras noviembre. Son pares intensidad↔ensayo densos y controlados en el estado
+  de instrumento vigente, contra las 64 muestras de laboratorio que tiene esa
+  ventana hoy.
+- **Limitación para la tesis:** estos escalones solo son detectables desde el
+  2025-07-13, cuando arranca la historia del PI. Antes hay 348 muestras de la
+  BD a 5-13 por mes, con las que un escalón así es indetectable. El tramo
+  2021-2025 **puede contener otros mantenimientos que no podemos ver**.
+- `lr_fe_cu` perdió señal de Cu con el cambio (R² 0.206 → 0.092). Único caso
+  donde el mantenimiento parece haber empeorado algo; revisar si se retoma Cu.

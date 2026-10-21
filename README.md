@@ -168,11 +168,16 @@ llaman a `src/`.
 | `24_orden_escalado_ortogonalizacion.py` | ¿Escalar antes de ortogonalizar? (métricas de clustering) | Diferencia marginal |
 | `25_impacto_orden_en_cu_mo.py` | Lo mismo, medido en R² de Cu/Mo con control | No (el control gana en 3 de 4) |
 | `26_figura_mejor_estrategia_kalman_mayo.py` | **Mejor estrategia vigente**: Fe con Kalman, desde mayo | `reports/fig_validacion_kalman_desde_mayo` |
+| `27_diff_reconstruccion_pi.py` | `limpiar_pi()` vs `lecturas_por_evento()`, sin escribir en `data/` | Diff del rediseño de la 1a (§18) |
+| `28_experimento_clustering_intensidades_crudas.py` | Agrupar con las 5 intensidades crudas sobre los 15 meses: 7 algoritmos × k=2..8 + HDBSCAN, métricas internas, estabilidad, validación externa, control de época, control aleatorio y estabilidad del autoencoder | **El k=2 es la recalibración de nov-2025**, no mineral (§19) |
+| `29_clustering_post_mantenimiento.py` | Lo mismo **dentro de una sola época de instrumento** (`--desde`/`--hasta`), con el compósito como validador externo y la prueba gradiente-vs-grupos | **Gradiente de Mo, no grupos**; replicado en las dos ventanas (§19) |
 
 ### `scripts/`
 
 | Archivo | Qué hace |
 |---|---|
+| `diagnostico_deriva_intensidades.py` | Separa las **tres** causas de la deriva de magnitud (dilución de la muestra, escalón de recalibración, decaimiento de fuente) + la invarianza por energía de canal | §19 |
+| `comparar_epocas_mo.py` | ¿Se pueden juntar las dos épocas de instrumento para Mo? Regresión por época, dummy + interacción, validación cruzada de época | Sí, **con offset** (§19) |
 | `merge_cobre_data.py` | Fusiona la extracción de BD y la de PI, ordena por tiempo y parte en train/test |
 | `assay_lab_test.py` | Combina y limpia exportaciones de AssayLab |
 | `split_date_time.py` | Separa una columna datetime en `date` + `time` |
