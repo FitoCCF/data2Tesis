@@ -111,10 +111,20 @@ interfaz antigua (ortogonalización, `EstimadorHibrido`).
   los signos que predice la física. El techo de la corrección actual (0.91 →
   0.73 sd) es ese. Dentro de época el proxy es **mejor** que el +0.659 global de
   §2.4: `corr(logSumI, pSol)` centrado por mes da +0.840 (pre) y +0.684 (post).
-- **Defecto abierto en la etapa 3:** `dil = logSumI − EWMA(90 d)` atraviesa la
-  ventana de recalibración de nov-2025 a ene-2026 y durante ~3 meses absorbe el
-  escalón como si fuera dilución. Esto **sí mueve resultados**: `dil` escala
-  Fe/Cu. El decaimiento de −2.7 %/año sí lo maneja una EWMA; el escalón no.
+- **`dil` NO se toca, y está medido (§19.10).** Es cierto que
+  `dil = logSumI − EWMA(90 d)` atraviesa la recalibración de nov-2025 y absorbe
+  el escalón (media mensual −0.075 en dic-ene, sobre sd 0.095). Pero **las ocho
+  variantes que quitan el escalón empeoran la corrección**: el efecto residual
+  de `pSol` sobre `lr_fe_cu` pasa de 0.712 (actual) a 0.729-0.752 al
+  re-nivelar o reiniciar por época, y acortar la vida media también empeora.
+  El escalón de `logSumI` fue −7.4 %, en la **misma dirección** que la caída
+  del `pSol` y en los mismos meses, así que quitarlo le resta señal real: **la
+  corrección funciona en parte por coincidencia**. `DIL_HALFLIFE="90D"` y
+  `DIL_CORREGIR=["lr_fe_cu"]` se quedan. **Riesgo con disparador:** si un
+  mantenimiento futuro mueve las intensidades en dirección contraria a la del
+  sólido, `dil` corrompe la corrección con el signo equivocado — la salvaguarda
+  es el monitor de cocientes y re-ajustar `b` tras cada mantenimiento, no
+  cambiar la fórmula. Reproducible: `scripts/variantes_senal_dilucion.py`.
 - **El courier expone MUCHO más que el concentrado (hallado el 2026-10-01, §15).**
   El PI tiene **66 tags `_296290_*Canal*`** con los 5 canales de intensidad de
   *cada* línea de ambos couriers (`RebHidroL1/L2`, `ConcPrimL1/L2`,

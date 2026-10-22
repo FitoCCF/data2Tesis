@@ -2066,3 +2066,70 @@ explicación:
   2021-2025 **puede contener otros mantenimientos que no podemos ver**.
 - `lr_fe_cu` perdió señal de Cu con el cambio (R² 0.206 → 0.092). Único caso
   donde el mantenimiento parece haber empeorado algo; revisar si se retoma Cu.
+
+### 19.10 El "defecto de `dil`" NO hay que arreglarlo — corrige a §19.9
+
+§19.9 anotó como defecto que `dil = logSumI − EWMA(90 d)` atraviesa la ventana
+de recalibración de nov-2025 y durante ~3 meses absorbe un cambio de
+instrumento como si fuera dilución. **El diagnóstico del mecanismo es
+correcto** y se ve en la media mensual de `dil` (sd global 0.095):
+
+```
+2025-09 +0.017 | 2025-11 -0.009 | 2026-01 -0.079 | 2026-04 -0.043 | 2026-07 -0.147
+2025-10 +0.016 | 2025-12 -0.075 | 2026-03 -0.012 | 2026-05 -0.114 | 2026-09 +0.034
+```
+
+Dic-ene es el escalón. Pero **may-jul es peor (−0.11 a −0.15)** y eso no es el
+escalón: es la EWMA sin poder seguir la caída sostenida del `pSol` (2026Q1
+20.55 → Q3 16.39).
+
+**Medida la consecuencia, la conclusión se invierte.** Métrica del objetivo
+(la de §10.7): efecto de `pSol` sobre `lr_fe_cu` a química fija, p10→p90 en sd
+del feature. Sin corregir: **+0.896 sd**.
+
+| variante | corr(dil,pSol) | b | efecto residual |
+|---|---|---|---|
+| **EWMA 90D global (actual)** | 0.622 | 0.1045 | **0.712** |
+| EWMA 90D por época | 0.578 | 0.0877 | 0.752 |
+| EWMA 90D, escalón re-nivelado | 0.595 | 0.0977 | 0.732 |
+| EWMA 90D, re-nivelado + por época | 0.578 | 0.0877 | 0.752 |
+| EWMA 30D / 14D / 7D global | 0.582 / 0.554 / 0.529 | — | 0.736 / 0.767 / 0.799 |
+| EWMA 180D global | 0.634 | 0.1049 | 0.709 |
+| EWMA 180D, escalón re-nivelado | 0.599 | 0.0990 | 0.729 |
+
+**Las ocho variantes que quitan el escalón empeoran la corrección.** La única
+que mejora es una memoria *más larga* (180D, 0.709 vs 0.712) y es diferencia en
+la tercera cifra.
+
+**El motivo, y es incómodo:** el escalón de `logSumI` fue **−7.4 %**, o sea en
+la **misma dirección** en la que venía cayendo el `pSol`, y en los mismos
+meses. Quitarlo le resta a `dil` algo que correlaciona con la dilución real.
+**La corrección actual funciona en parte por coincidencia.**
+
+- **Decisión: NO cambiar `dil`.** `DIL_HALFLIFE="90D"` y `DIL_CORREGIR=["lr_fe_cu"]`
+  quedan como están.
+- **Riesgo a registrar, con disparador concreto:** si un mantenimiento futuro
+  empuja las intensidades en la dirección **contraria** a la del sólido, `dil`
+  corromperá la corrección y con el signo equivocado. La salvaguarda no es
+  cambiar la fórmula: es el **monitor de cocientes entre canales** (§19.2 da la
+  firma) y **volver a ajustar `b` después de cada mantenimiento**.
+- **El techo sigue donde estaba:** la corrección quita el 21 % del efecto de
+  `pSol` (0.896 → 0.712) y nada de lo probado lo mejora. Subirlo exige `pSol` a
+  cadencia de lectura, que no existe (§9.5).
+- **Lección de método, la quinta de este tipo en el proyecto:** se diagnosticó
+  el mecanismo y se dio por hecha la consecuencia sin medirla. El mecanismo era
+  real y la consecuencia era la contraria.
+
+Reproducible: `pixi run python scripts/variantes_senal_dilucion.py`.
+
+### 19.11 Corrección: la campaña del Outocal no es un dataset aparte
+
+§19.9 y el ADR del día listaban "conseguir los datos de la campaña del Outocal"
+como lo de mayor valor pendiente, razonando que el muestreo de
+`works4cdp_assay` no mostraba ningún pico tras noviembre (sigue plano en 5-13
+por mes) y que por tanto la campaña estaría en otro sistema.
+
+**Planta lo descartó: las muestras de esas fechas son las que ya están en la
+base de datos.** No hay un conjunto denso aparte. El conjunto supervisado es el
+que hay: 348 muestras con ley en todo el histórico, 64 en la ventana
+post-mantenimiento. La ausencia de pico no era un dato faltante, era el dato.
