@@ -2133,3 +2133,136 @@ por mes) y que por tanto la campaña estaría en otro sistema.
 base de datos.** No hay un conjunto denso aparte. El conjunto supervisado es el
 que hay: 348 muestras con ley en todo el histórico, 64 en la ventana
 post-mantenimiento. La ausencia de pico no era un dato faltante, era el dato.
+
+### 19.12 El techo del Cu: su R² bajo es falta de varianza, no falla del modelo
+
+Encargo: medir cuánto del error del Cu es irreducible. Dos métodos; el primero
+no sirve y conviene que quede dicho.
+
+**Variograma (descartado).** Extrapolar la semivarianza a lag 0 para estimar el
+*nugget* exige conocer la forma por debajo de 24 h y **no hay datos ahí**: el
+muestreo es cada 12 h y los pares de 12 h están contaminados por el turno (la
+semivarianza a 24 h es MENOR que a 12 h). Los resultados salen absurdos: techo
+0.571 para Mo cuando el modelo logra 0.783, y 1.000 para Cu en el test. El
+"nugget" que estima es error de medición **más** variación de proceso más rápida
+que 24 h, o sea una cota demasiado floja.
+
+**Desacuerdo entre los dos cortes (sirve a medias).** Sobre 333 pares:
+
+| ley | sd(dif entre cortes) | soporte | sd(resid modelo) | resid/dif | R² modelo |
+|---|---|---|---|---|---|
+| Cu | 2.223 | 0.743 | 1.460 | 0.66 | 0.452 |
+| Fe | 1.602 | 0.327 | 1.141 | 0.71 | 0.119 |
+| Mo | 0.863 | 0.199 | 0.367 | 0.43 | 0.783 |
+
+El **soporte** —la variación real del material dentro de las 12 h, estimada con
+la estimación por lectura— es chico: 0.743 de 2.223 en Cu. **El desacuerdo es
+casi todo muestreo, no diferencia instante-vs-promedio.**
+
+Suponer error igual en los dos cortes da un techo **por debajo** de lo que el
+modelo logra, o sea el supuesto es falso: el **grab carga más error** que el
+compósito por incrementos, que es lo que predice la teoría de muestreo. No se
+puede repartir sin duplicados de ensayo, así que **el techo exacto no es
+medible con lo que hay**. Lo que sí queda: **el residuo del modelo ya es ≤ el
+desacuerdo entre las dos referencias.**
+
+**Y la razón de fondo del R² bajo del Cu no es el error, es el denominador:**
+
+```
+ley    media     sd    CV %
+cu     24.87   1.872    7.5
+fe     28.19   1.301    4.6
+mo      1.63   0.712   43.8
+ins    11.08   2.595   23.4
+```
+
+El Cu del concentrado **casi no se mueve porque es el objetivo controlado**. El
+0.783 del Mo no es porque el Mo se mida mejor: es que hay **6× más variación
+relativa que explicar**. Mirando el cociente residuo/desacuerdo, el modelo no
+es mucho peor con el Cu (0.66) que con el Mo (0.43).
+
+**Decisión: no invertir en modelado de Cu.** Su error ya está en la resolución
+de la referencia y hay poca varianza que explicar, poca **por diseño del
+proceso**. Lo que desbloquearía la pregunta son **30-50 duplicados de ensayo del
+compósito**: fijan el error de la referencia y el techo deja de ser incógnita.
+
+### 19.13 Hay un sesgo de muestreo Cu↔ganga de −1.2 puntos entre los dos cortes
+
+**Primero, una corrección de vocabulario que venía arrastrándose:** §11.3 y
+§19.12 hablaban de "dos laboratorios". **Es el mismo laboratorio con el mismo
+método** (confirmado con planta). Son dos **cortes** del mismo flujo:
+
+```
+flujo → MULTIPLEXOR ─corte→ balde 12 h          (COMPÓSITO; no pasa por el probe)
+             │
+             └──────→ PROBE (rayos X) ─corte→ recipiente  (CALIBRACIÓN)
+```
+
+El multiplexor está a **menos de 2 m** del probe y en ese tramo **no hay agua**;
+el agua de dilución se aplica **muchos metros antes del multiplexor**, de modo
+que **las dos muestras ven el mismo material ya diluido**. Los dos cortadores
+toman la **sección completa** del flujo y el balde se **agita y se procesa
+completo**. Y las muestras puntuales son las de **calibración del Outocal**:
+intensidad y ensayo en la misma fila de la BD.
+
+Eso corrige también a §12 y al `CLAUDE.md`, que decían que el compósito se corta
+"antes del multiplexor": se corta **en** el multiplexor, antes del probe.
+
+**El sesgo medido** (333 pares, 2023-01 → 2026-08):
+
+| | diferencia | media ref. | relativo |
+|---|---|---|---|
+| Cu | **−1.200** | 25.71 | −4.7 % |
+| Fe | −0.165 | 28.55 | −0.6 % |
+| Mo | +0.115 | 1.38 | +8.4 % |
+| Insoluble | **+1.160** | 9.41 | +12.3 % |
+
+- **Es balance de masa Cu↔ganga:** `corr(dcu, dins) = −0.834`, y la suma
+  `dcu+dins` da media −0.066 con sd 1.573 contra sd 2.252 y 2.845 de cada una.
+  **Lo que el grab pierde en Cu lo gana en ganga, punto por punto.**
+- **Es ADITIVO, no proporcional** (Bland-Altman, la diferencia contra el
+  promedio: pendiente +0.113, p=0.093). Sesgo medio −1.200, IC95
+  [−1.439, −0.961]. Eso importa: llevar el courier a la escala del flujo sería
+  **una constante**, no una recalibración.
+- **Límites de concordancia [−5.56, +3.16]:** una muestra puntual individual
+  puede diferir del compósito de su ventana en 5 puntos de Cu. **Solo el
+  promedio es comparable; par a par no.** Eso toca la etapa 9, que evalúa contra
+  18 muestras de la BD en test — con esa dispersión el intervalo es muy ancho, y
+  explica por qué el Kalman "empeora Cu" ahí de 0.52 a 0.24 sin que eso signifique
+  que empeoró algo real.
+
+**Lo que NO es, cada hipótesis con su medición:**
+
+| descartado | con qué |
+|---|---|
+| diferencia analítica entre laboratorios | mismo laboratorio, mismo método |
+| diferencia de soporte (instante vs 12 h) | solo 0.743 de los 2.223 de dispersión |
+| agua de dilución | se aplica aguas arriba de los dos; `corr(dcu, pSol) = +0.006`, p=0.92 |
+| la línea al probe | <2 m y sin agua |
+| cortadores mal delimitados | toman sección completa, los dos |
+| sedimentación en el balde | se agita y se procesa todo |
+| hora de toma / ciclo diario | el ciclo tiene amplitud 0.839 y las 10-12 h están 0.179 bajo la ventana AM: explica el **15 %** |
+| error de escala (proporcional) | Bland-Altman: aditivo |
+| deriva en el tiempo | pendiente −0.205/año, p=0.080, no monótona (2023 −0.74, 2024 −1.22, 2025 −1.83, 2026 −0.84) |
+| diferencia de BASE (húmeda/seca, normalización) | los relativos de los 4 elementos no son iguales ni del mismo signo (−4.7 %, −0.6 %, +8.4 %, +12.3 %); una base mueve todo por el mismo factor |
+
+**El fenómeno queda sin explicación.** Es real, aditivo, constante y con firma
+de intercambio de material — pero los cuatro mecanismos que se propusieron
+cayeron con la descripción del muestreo. Falta información de proceso, no
+análisis.
+
+**El contraste que lo avanzaría sin tocar planta:** extraer los compósitos de
+**cabeza** (`7100AIP011-014MAN`) y **relave** (`7100AIP031-034MAN`) y sus
+muestras puntuales (`sample_id` 17 y 18 para cabeza), y ver si el mismo sesgo
+relativo de ~−4.7 % en Cu aparece también ahí. Si está en las tres líneas es
+común a la arquitectura de muestreo; si solo está en el concentrado, se busca en
+esa línea. Es una extracción, no un ensayo de planta.
+
+**Y lo que sí queda decidido**, que estaba abierto desde el ADR del 2026-09-30:
+no son dos candidatas al mismo puesto. La **puntual es la referencia de
+calibración por diseño** (ensaya el material que vio el probe, de ahí el calce
+exacto de §12) y el **compósito es la auditoría independiente** (por
+incrementos, representa el flujo). Cada una es correcta para su propósito, y el
+−1.2 es el precio de que sean dos materiales distintos.
+
+Reproducible: `pixi run python scripts/referencias_laboratorio.py`.

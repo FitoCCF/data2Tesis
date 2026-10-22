@@ -179,6 +179,7 @@ llaman a `src/`.
 | `diagnostico_deriva_intensidades.py` | Separa las **tres** causas de la deriva de magnitud (dilución de la muestra, escalón de recalibración, decaimiento de fuente) + la invarianza por energía de canal | §19 |
 | `comparar_epocas_mo.py` | ¿Se pueden juntar las dos épocas de instrumento para Mo? Regresión por época, dummy + interacción, validación cruzada de época | Sí, **con offset** (§19) |
 | `variantes_senal_dilucion.py` | ¿Conviene cambiar `dil` para que no absorba el escalón de nov-2025? 10 variantes contra el efecto residual de `pSol` | **No**: todas las que quitan el escalón empeoran (§19.10) |
+| `referencias_laboratorio.py` | Las dos fuentes de ley: techo demostrable por elemento y el sesgo de muestreo entre los dos cortes, con sus exclusiones | Cu: R² bajo por falta de varianza (CV 7.5 %); sesgo Cu↔ganga de −1.2 sin explicar (§19.12-13) |
 | `merge_cobre_data.py` | Fusiona la extracción de BD y la de PI, ordena por tiempo y parte en train/test |
 | `assay_lab_test.py` | Combina y limpia exportaciones de AssayLab |
 | `split_date_time.py` | Separa una columna datetime en `date` + `time` |

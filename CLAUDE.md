@@ -151,16 +151,54 @@ interfaz antigua (ortogonalización, `EstimadorHibrido`).
   `sample_id=10` "Concentrado Final" (equipo 1, otro courier). Verificado por
   valor el 2026-09-30: 125/125 muestras del 24 calzan con el PI; 0 de ~2,700
   de las otras 24 líneas de muestreo.
-- **Las dos fuentes de ley son dos cortes físicos del mismo courier, y solo una
-  tiene intensidad propia.** La BD es toma **puntual Lun/Mie/Vie** (356/365 de
-  las muestras con ley) del material que **sí pasó por los rayos X**: existe la
-  lectura que le corresponde, y de ahí que el calce por valor sea exacto —es
-  identidad del material, no un emparejamiento afortunado. El compósito se corta
-  **antes del multiplexor**, 2/día (07:30 y 19:30), y **no tiene intensidad
-  propia**: la única alineación posible es promediar la estimación sobre su
-  ventana. Eso justifica *físicamente* los dos protocolos de evaluación (etapa 9
-  por lectura, etapa 8 por ventana) y que el compósito no audite Zn, que no
-  reporta.
+- **Las dos fuentes de ley son dos CORTES del mismo flujo, con el MISMO
+  laboratorio y el MISMO método** (confirmado con planta el 2026-10-22; antes
+  esta nota y la bitácora decían "dos laboratorios", que es incorrecto):
+
+  ```
+  flujo → MULTIPLEXOR ─corte→ balde 12 h          (COMPÓSITO; no pasa por el probe)
+               │
+               └──────→ PROBE (rayos X) ─corte→ recipiente  (CALIBRACIÓN)
+  ```
+
+  El multiplexor está a **<2 m** del probe y en ese tramo **no hay agua**; el
+  agua de dilución se aplica **muchos metros antes del multiplexor**, así que
+  las dos muestras ven el mismo material ya diluido. Los dos cortadores toman
+  la **sección completa** y el balde se **agita y se procesa completo**.
+  La toma puntual es **Lun/Mie/Vie** entre las 10 y las 12 h, son las muestras
+  de **calibración del Outocal**, y su intensidad y su ensayo quedan en la misma
+  fila de la BD — de ahí que el calce por valor sea exacto: es identidad del
+  material. El compósito **no tiene intensidad propia**, así que la única
+  alineación posible es promediar la estimación sobre su ventana. Eso justifica
+  *físicamente* los dos protocolos (etapa 9 por lectura, etapa 8 por ventana) y
+  que el compósito no audite Zn, que no reporta.
+  **Roles, y no son dos candidatas al mismo puesto:** la puntual es la
+  referencia de **calibración** por diseño; el compósito es la **auditoría
+  independiente**.
+- **Hay un sesgo de muestreo Cu↔ganga de −1.2 puntos entre los dos cortes
+  (§19.13), y sigue SIN EXPLICACIÓN.** La puntual lee **−1.200** de Cu
+  (IC95 [−1.44, −0.96]) y **+1.160** de insoluble respecto del compósito de su
+  ventana; `corr(dcu, dins) = −0.834` y la suma se cancela: es balance de masa.
+  Es **aditivo**, no proporcional (Bland-Altman p=0.093). Descartados con
+  medición: laboratorio, soporte (solo 0.743 de 2.223), agua
+  (`corr(dcu,pSol)=+0.006`), la línea al probe, delimitación de los cortadores,
+  sedimentación del balde, hora de toma (explica el 15 %), error de escala,
+  deriva temporal y diferencia de base (los 4 relativos no son iguales ni del
+  mismo signo). **No proponer más mecanismos sin información de proceso nueva.**
+  El contraste que avanzaría: extraer cabeza y relave y ver si el mismo −4.7 %
+  relativo aparece ahí.
+- **Los límites de concordancia entre los dos cortes son [−5.56, +3.16] en Cu.**
+  Par a par las dos fuentes **no son comparables**; solo el promedio lo es. Por
+  eso la etapa 9, con 18 muestras de la BD en test, tiene intervalos muy anchos
+  — y por eso el Kalman "empeora Cu" ahí (0.52 → 0.24) sin que eso pruebe que
+  empeoró algo real.
+- **El techo del Cu: su R² bajo es falta de varianza, no falla del modelo
+  (§19.12).** `CV` del Cu en el concentrado = **7.5 %** contra **43.8 %** del
+  Mo: el Cu casi no se mueve porque es el objetivo controlado. Y el residuo del
+  modelo (sd 1.460) ya es ≤ el desacuerdo entre las dos referencias (sd 2.223).
+  **No invertir en modelado de Cu**; lo que desbloquearía la pregunta son 30-50
+  **duplicados de ensayo** del compósito. El variograma NO sirve para estimar
+  el techo acá (no hay datos bajo 24 h y el turno contamina los pares de 12 h).
 - **La ventana centrada del compósito ya está verificada: no volver a
   cuestionarla desde cero.** Que el compósito sea "de turno, cada 12 h" sugiere
   que su marca es el **cierre** (soporte `[t−12h, t]`); está medido que se
