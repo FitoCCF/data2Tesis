@@ -39,7 +39,8 @@
 import numpy as np                                        # cálculo numérico
 import pandas as pd                                       # DataFrames
 
-from .config import METALES, FEATS_CLUSTER, FEATS_REGRESION, DIL_HALFLIFE  # canales, features, dilución
+from .config import (METALES, FEATS_CLUSTER, FEATS_REGRESION, DIL_HALFLIFE,  # canales, features, dilución
+                     FECHA_EPOCA_POST, FIN_TRANSICION_EPOCA, COL_EPOCA)     # épocas del instrumento
 
 
 def features_cierre(df: pd.DataFrame) -> pd.DataFrame:
@@ -160,12 +161,23 @@ def senal_dilucion(df: pd.DataFrame, halflife: str = DIL_HALFLIFE) -> pd.Series:
     return (log_sum - base).fillna(0.0).rename("dil")
 
 
+def epoca_instrumento(ts: pd.Series) -> pd.DataFrame:
+    """Época del instrumento por lectura: 0 antes de FECHA_EPOCA_POST, 1 desde ahí.
+    Las lecturas de la transición (los canales se movieron escalonados, del
+    2025-11-30 al 2025-12-10) quedan con epoca = 1 y MARCADAS, no borradas:
+    en train no hay ninguna muestra con ley en esa ventana."""
+    post = ts >= pd.Timestamp(FECHA_EPOCA_POST)
+    return pd.DataFrame({COL_EPOCA: post.astype(int),
+                         "transicion_epoca": post & (ts < pd.Timestamp(FIN_TRANSICION_EPOCA))})
+
+
 def agregar_features(df: pd.DataFrame) -> pd.DataFrame:
     """Etapa 2: agrega a la tabla las features de clustering, la señal de
-    dilución y las de regresión. No ajusta nada: no hay artefacto ni fuga."""
+    dilución, las de regresión y la época. No ajusta nada: no hay artefacto ni fuga."""
     df = df.sort_values("ts").reset_index(drop=True)
     return pd.concat([df, features_cluster(df), senal_dilucion(df),
-                      features_regresion(df)[columnas_regresion()]], axis=1)
+                      features_regresion(df)[columnas_regresion()],
+                      epoca_instrumento(df["ts"])], axis=1)
 
 
 # ============================================================

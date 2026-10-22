@@ -1,0 +1,79 @@
+--- a/src/pipeline/modelos.py	2026-10-22 16:08:24.625364442 -0500
++++ b/src/pipeline/modelos.py	2026-10-22 16:08:24.642536043 -0500
+@@ -27,23 +27,53 @@
+ from sklearn.cross_decomposition import PLSRegression      # mínimos cuadrados parciales
+ from sklearn.preprocessing import StandardScaler           # estandarización interna
+ from sklearn.pipeline import Pipeline                      # encadena escala + modelo
++from sklearn.base import BaseEstimator, RegressorMixin, clone  # envoltorio del offset por época
+ from sklearn.metrics import r2_score, mean_absolute_error  # métricas
+ 
+-from .config import (FEATS_REGRESION, TARGETS, MODELO_POR_TARGET, RANDOM_STATE,
++from .config import (FEATS_REGRESION, COL_EPOCA, TARGETS, MODELO_POR_TARGET, RANDOM_STATE,
+                      N_SPLITS, PURGA, EMBARGO, N_MIN_LOCAL, MIN_TRAIN_FOLD_LOCAL,
+                      N_CONTROL, PCTL_CONTROL)
+ from .split_temporal import split_purgado                  # walk-forward con purga y embargo
+ 
+ 
+-def _construir_modelo(nombre: str) -> Pipeline:
+-    """Devuelve un pipeline (estandarizar -> modelo) según la familia elegida."""
++class OffsetEpoca(BaseEstimator, RegressorMixin):
++    """y = f(X) + delta * epoca. La ÚLTIMA columna de X es la época (0/1); f
++    solo ve las demás. Backfitting: f sobre y - delta*e, delta = media del
++    residuo en la época 1. Sin muestras de época 1 en el train, delta = 0."""
++
++    def __init__(self, base=None, max_iter: int = 50, tol: float = 1e-6):
++        self.base, self.max_iter, self.tol = base, max_iter, tol
++
++    def fit(self, X, y):
++        X, y = np.asarray(X, dtype=float), np.asarray(y, dtype=float).ravel()
++        Xb, e = X[:, :-1], X[:, -1]
++        post = e == 1
++        self.delta_ = 0.0
++        self.base_ = clone(self.base).fit(Xb, y)
++        if post.any():
++            for _ in range(self.max_iter):
++                d = float(np.mean(y[post] - _predecir(self.base_, Xb[post])))
++                self.base_ = clone(self.base).fit(Xb, y - d * e)
++                if abs(d - self.delta_) < self.tol:
++                    self.delta_ = d
++                    break
++                self.delta_ = d
++        return self
++
++    def predict(self, X):
++        X = np.asarray(X, dtype=float)
++        return _predecir(self.base_, X[:, :-1]) + self.delta_ * X[:, -1]
++
++
++def _construir_modelo(nombre: str) -> "OffsetEpoca":
++    """Devuelve (estandarizar -> modelo) según la familia, con offset por época."""
+     if nombre == "SVR":                                   # cobre
+         modelo = SVR(kernel="rbf", C=10, epsilon=0.3)     # SVR con kernel radial
+     elif nombre == "Ridge":                               # hierro / molibdeno
+         modelo = Ridge(alpha=1.0)                         # Ridge con regularización moderada
+     else:                                                 # zinc
+         modelo = PLSRegression(n_components=2)            # PLS con 2 componentes
+-    return Pipeline([("scaler", StandardScaler()), ("modelo", modelo)])  # escala + modelo
++    return OffsetEpoca(Pipeline([("scaler", StandardScaler()), ("modelo", modelo)]))
+ 
+ 
+ def _predecir(modelo: Pipeline, X: np.ndarray) -> np.ndarray:
+@@ -98,7 +128,7 @@
+     """
+     s = conjunto_supervisado(df)                          # train con ley válida, ordenado
+     folds = split_purgado(s["ts"], n_splits=N_SPLITS, purga=PURGA, embargo=EMBARGO)  # una sola vez
+-    X = s[FEATS_REGRESION].to_numpy()                     # features (transformaciones fijas)
++    X = s[FEATS_REGRESION + [COL_EPOCA]].to_numpy()       # features + época al final (offset)
+     grupo = s["grupo"].to_numpy()                         # grupo de mineral (GMM congelado)
+     grupos = sorted(s["grupo"].unique())                  # nombres de los grupos
+     rng = np.random.default_rng(RANDOM_STATE)             # azar reproducible del control
+@@ -168,7 +198,8 @@
+     return {                                              # bundle a serializar
+         "modelos_locales": modelos_locales,               # (ley, grupo) -> pipeline, solo los ruteados
+         "modelos_globales": modelos_globales,             # ley -> pipeline
+-        "features": FEATS_REGRESION,                      # orden de features esperado
++        "features": FEATS_REGRESION + [COL_EPOCA],        # la época va al final
++        "offset_epoca": {t: m.delta_ for t, m in modelos_globales.items()},
+         "targets": TARGETS,                               # leyes estimadas
+         "cluster_col": "grupo",                           # columna de grupo usada
+         "tabla_ruteo": tabla_ruteo,                       # decisiones local/global

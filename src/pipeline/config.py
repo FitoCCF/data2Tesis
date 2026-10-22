@@ -93,6 +93,14 @@ METALES = ["n1fe", "n2cu", "n3zn", "n4mo"]                # canales de metal (si
 FEATS_CLUSTER = ["lr_fe_cu", "lr_zn_cu", "lr_mo_cu"]      # log-cocientes contra Cu (alr, Aitchison)
 FEATS_REGRESION = ["n1fe_f", "n2cu_f", "n3zn_f", "n4mo_f", "logSumI"]  # fracciones de cierre + magnitud
 FEATURES = DATA_PROCESSED / "courier_features.csv"       # salida de la etapa 2
+
+# --- Épocas del instrumento (mantenimiento + recalibración del Outocal, nov-2025, bitácora §19) ---
+# Los cocientes entre canales se movieron −15.1 % a +14.1 %: antes y después NO son
+# la misma medición. La regresión lleva un OFFSET aditivo por época (pendientes
+# compartidas; en Mo medido: pendientes 1.99 / 1.95, salto −0.31, p=0.641 de interacción).
+FECHA_EPOCA_POST = "2025-11-30"     # primer canal en moverse (n1fe); desde aquí epoca = 1
+FIN_TRANSICION_EPOCA = "2025-12-15" # el último (n6sc, 2025-12-10) ya se movió; [inicio, fin) = transición
+COL_EPOCA = "epoca"                 # 0 = pre, 1 = post. Entra al modelo como offset, no como feature
 # Corrección de dilución (2026-09-30). El cociente NO cancela del todo el agua:
 # a química fija, pSol p10->p90 mueve lr_fe_cu +0.91 sd (t=+12) y lr_mo_cu
 # -0.37 sd (el agua atenúa distinto Fe 6.4 keV y Cu 8.0 keV). n6sc no sirve
