@@ -112,9 +112,13 @@ K_GRUPOS = 4                  # grupos del GMM (etapa 4). Elegido por diagnostic
                               # distinto confirmado por laboratorio. k=2 es la alternativa más estable (ARI 0.96).
 
 # --- Leyes químicas a estimar y el modelo elegido para cada una ---
-TARGETS = ["pFe", "pCu", "pMo", "pZn"]                    # leyes de laboratorio
+TARGETS = ["pFe", "pCu", "pMo"]                           # leyes de laboratorio (objetivo 1 de la tesis)
 MODELO_POR_TARGET = {"pFe": "Ridge", "pCu": "SVR",        # familia de modelo por ley
-                     "pMo": "Ridge", "pZn": "PLS"}
+                     "pMo": "Ridge"}
+# pZn salió de TARGETS el 2026-10-22: fuera del objetivo 1, el compósito no lo
+# reporta (sin auditoría ni escala balde) y su R² 0.90 descansa en ~15 picos que
+# concentran el 80 % de la varianza. El canal n3zn SIGUE como feature (n3zn_f,
+# lr_zn_cu, invariante a la dilución). Revisa el ADR del 2026-09-01.
 
 # --- Etapa 5: validación walk-forward y regla de ruteo (src/pipeline/modelos.py) ---
 # Reemplaza a KFold(shuffle=True), que filtraba información en una serie de

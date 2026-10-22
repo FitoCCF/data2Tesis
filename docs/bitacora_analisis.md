@@ -2266,3 +2266,107 @@ incrementos, representa el flujo). Cada una es correcta para su propósito, y el
 −1.2 es el precio de que sean dos materiales distintos.
 
 Reproducible: `pixi run python scripts/referencias_laboratorio.py`.
+
+### 19.14 La estructura química del concentrado: dos perillas, y el Cu sin perilla propia
+
+Medido el 2026-10-22 sobre la **química del laboratorio** (compósito de 12 h,
+n = 2601, 2022-12-30 → 2026-09-29), sin instrumento en medio. Es la pregunta
+previa a la arquitectura de estimación: qué se mueve con qué. Todo va además
+**centrado por mes**, para que la tendencia lenta del insoluble de 2022 a 2026
+no fabrique correlaciones.
+
+| | Cu | Fe | Mo | ins |
+|---|---|---|---|---|
+| **CV** | 8.4 % | 5.2 % | **46.9 %** | 29.2 % |
+
+| par | Pearson crudo | centrado por mes | parcial (controlando las otras dos) |
+|---|---|---|---|
+| Cu ~ Mo | +0.034 | −0.034 | −0.110 |
+| Fe ~ Mo | −0.404 | −0.297 | −0.351 |
+| Mo ~ ins | +0.176 | +0.060 | −0.097 |
+| Cu ~ Fe | −0.206 | −0.030 | **−0.646** |
+| Cu ~ ins | −0.566 | −0.714 | **−0.772** |
+| Fe ~ ins | −0.474 | −0.394 | **−0.716** |
+
+**Lo que dice, en tres frases:**
+
+1. **El Mo es su propia perilla.** Se mueve mucho (CV 46.9 %) y **no arrastra
+   al Cu** (corr ≈ 0 de las tres formas de medirla) **ni al insoluble**. Junto
+   con §19.6 (gradiente, no grupos) explica por qué el Mo es el único resultado
+   defendible: hay varianza que explicar y no está trabada con el resto.
+2. **Pero sí arrastra al Fe**: −0.56 de Fe por cada punto de Mo (IC95 −0.62 a
+   −0.50), igual centrado por mes (−0.559). **No es aritmética del cierre de
+   masa**: si lo fuera, a Cu e insoluble fijos el coeficiente sería **−1**, y la
+   suma de los cuatro sería constante; en cambio la suma (65.10 ± 1.70) **sube
+   +0.52 por punto de Mo** (p=1.4e-28). Lo que no se mide (azufre, oxígeno)
+   acompaña al Mo. Es química del mineral, no un artefacto de las fracciones.
+   En varianza es modesto: el Mo explica el **9-16 %** de la del Fe (centrado /
+   crudo).
+3. **Cu, Fe y ganga son la otra perilla, trabada por balance de masa.** Cu y Fe
+   casi no correlacionan entre sí en crudo (−0.03 centrado por mes), pero **a
+   ganga fija se intercambian fuerte** (parcial −0.646), y los dos van contra el
+   insoluble (parciales −0.77 y −0.72). Es la misma estructura que da
+   `ins ~ cu + fe` con R² 0.627 (ADR 2026-10-21 (2)) y el intercambio Cu↔ganga
+   de −1.2 puntos entre los dos cortes (§19.13). El **Cu no tiene perilla
+   propia**: es el objetivo controlado y la planta lo sostiene (CV 8.4 %, §19.12).
+
+**Lo que NO dice, y es el límite:** esto es la química. **Que el courier
+resuelva el intercambio Cu↔Fe↔ganga no está demostrado**, y lo medido apunta a
+que lo resuelve mal (R² fuera de fold Cu 0.545, Fe −0.170). La estructura fija
+la **arquitectura** — modelos globales sobre variables continuas, sin grupos —,
+no promete precisión en Cu y Fe.
+
+**La pista para el modelo de Fe:** el Mo se estima bien (R² 0.78) y el Mo
+explica parte del Fe con química real. Usar la estimación de Mo, o `lr_mo_cu`,
+para el Fe es una apuesta medible, chica en tamaño esperado, y debe pasar el
+walk-forward con control como todo lo demás.
+
+Reproducible: `pixi run python scripts/estructura_quimica_composito.py`.
+
+### 19.15 Dos decisiones de arquitectura: escala balde y Zn fuera de las leyes estimadas
+
+**1. Las estimaciones se reportan en la escala del COMPÓSITO (el "balde"), en
+las tres leyes.** Las dos fuentes difieren en Cu por −1.2 puntos aditivos y sin
+explicación (§19.13); el modelo aprende de la puntual, así que habla en escala
+"cucharada". Se elige la del compósito porque representa el flujo del turno,
+que es lo que interesa a metalurgia, y porque, al no conocerse el origen del
+−1.2, una constante fija podría quedar mal sin aviso: el Kalman lo sigue solo.
+Consecuencias:
+
+- el **Kalman es parte del modelo**, no una variante: sin él la salida está en
+  escala cucharada;
+- Fe (−0.18) y Mo (+0.07) van en la misma escala por consistencia — una sola
+  regla;
+- el **juez principal es la etapa 8** (compósito); la etapa 9 (puntual) pasa a
+  ser **control de calibración**, donde lo esperado es ver la diferencia de
+  ~1.2 en Cu. Ahí ya no se lee "el Kalman empeora el Cu";
+- el Cap. 6 de la tesis declara la escala, el porqué y que el −1.2 sigue sin
+  explicación.
+
+**2. `pZn` sale de `TARGETS`; el canal `n3zn` se queda como feature.** Razones:
+fuera del objetivo 1 (Cu, Fe, Mo); el compósito no reporta Zn, así que no tiene
+auditoría, ni Kalman, ni puede ir en escala balde; y su R² de 0.898 en el
+walk-forward descansa en la cola — mediana 0.151 %, CV 88.8 %, y las **15
+muestras** del 5 % superior aportan el **80.2 %** de la suma de cuadrados: mide
+"detecta los picos", no "estima el Zn diario". El test supervisado (18
+muestras) puede no traer ningún pico. `n3zn_f` y `lr_zn_cu` (invariante a la
+dilución por física, §19.3) **siguen entrando** a los modelos de Cu, Fe y Mo.
+Un detector de picos de Zn queda como posible trabajo aparte, fuera de la tesis.
+
+**Verificado que no mueve nada más:** etapas 5, 6, 8 y 9 corridas antes y
+después del cambio — las 36 filas de métricas contra el compósito, las 9 contra
+la BD y las predicciones fuera de fold de Fe, Cu y Mo son **idénticas**
+(diferencia máxima 0.0). Los folds no dependen de `TARGETS` y el Zn era el
+último en consumir el azar del control. La corrida de antes reproduce lo
+registrado (Mo fuera de muestra sin anomalías, n=209: corr 0.913, R² 0.814 →
+0.833 con Kalman) y queda como **línea base** del trabajo de modelado:
+
+| ley | walk-forward R² | compósito corr | R² modelo → +Kalman | MAE modelo → +Kalman |
+|---|---|---|---|---|
+| Fe | −0.170 | 0.525 | −0.211 → 0.189 | 1.114 → 0.913 |
+| Cu | 0.545 | 0.564 → 0.527 | 0.038 → 0.227 | 1.426 → 1.301 |
+| Mo | 0.776 | 0.913 → 0.914 | 0.814 → 0.833 | 0.252 → 0.220 |
+
+(compósito: fuera de muestra jun-sep 2026, sin anomalías, n=209). Revisa el ADR
+del 2026-09-01 *«`dropna` por elemento»*, que conservaba el Zn para comparar
+familias de regresores en V1; en V2, todo global, ese motivo ya no existe.

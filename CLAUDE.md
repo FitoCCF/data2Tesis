@@ -199,6 +199,18 @@ interfaz antigua (ortogonalización, `EstimadorHibrido`).
   **No invertir en modelado de Cu**; lo que desbloquearía la pregunta son 30-50
   **duplicados de ensayo** del compósito. El variograma NO sirve para estimar
   el techo acá (no hay datos bajo 24 h y el turno contamina los pares de 12 h).
+- **Estructura química del concentrado (§19.14): dos perillas, y el Cu sin
+  perilla propia.** El Mo no arrastra al Cu (corr ≈ 0) pero sí al Fe (−0.56 de
+  Fe por punto de Mo; **no** es cierre de masa, que daría −1). Cu, Fe y ganga
+  se intercambian por balance de masa (parciales −0.65 / −0.77 / −0.72). Es la
+  química del lab: que el courier resuelva ese intercambio **no** está
+  demostrado. `scripts/estructura_quimica_composito.py`.
+- **Escala balde y tres leyes (decidido el 2026-10-22, §19.15).** Las
+  estimaciones se reportan en escala del **compósito** para Fe, Cu y Mo: el
+  Kalman es parte del modelo, la etapa 8 es el juez y la 9 es control de
+  calibración (allí se espera ver ~1.2 de Cu). **`pZn` ya no está en
+  `TARGETS`**; el canal `n3zn` sigue como feature. Línea base del modelado en
+  §19.15; los datos nuevos del PI se extraen **al final**, como prueba ciega.
 - **La ventana centrada del compósito ya está verificada: no volver a
   cuestionarla desde cero.** Que el compósito sea "de turno, cada 12 h" sugiere
   que su marca es el **cierre** (soporte `[t−12h, t]`); está medido que se
