@@ -127,6 +127,12 @@ class MonitorEnLinea:
         print(f"  listo en {time.time() - t0:.0f} s; última lectura del courier: {A['ultima_lectura'].iloc[0]}"
               + (f"  ** SIN LECTURAS NUEVAS HACE {h:.1f} h **" if h > 1 else ""))
         mostrar(A)
+        try:                                             # la figura no debe tumbar el ciclo
+            from scripts.tendencia_en_linea import generar
+            generar()
+            print("  tendencia: reports/tendencia_en_linea.html")
+        except Exception as e:
+            print(f"  (tendencia no generada: {type(e).__name__}: {str(e)[:200]})")
         return A
 
 

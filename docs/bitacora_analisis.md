@@ -2370,3 +2370,121 @@ registrado (Mo fuera de muestra sin anomalías, n=209: corr 0.913, R² 0.814 →
 (compósito: fuera de muestra jun-sep 2026, sin anomalías, n=209). Revisa el ADR
 del 2026-09-01 *«`dropna` por elemento»*, que conservaba el Zn para comparar
 familias de regresores en V1; en V2, todo global, ese motivo ya no existe.
+
+---
+
+## 20. Sesión 2026-10-25 — control de dilución de los grupos con el `pSol` de laboratorio
+
+**Pregunta.** El `pSol` de la BD (sample 24, 377 muestras válidas, `5 < pSol ≤ 100`)
+no existe en línea, así que no sirve de feature (§2.10). ¿Sirve de **juez** de la
+etapa 4? Un grupo de mineral no debería distinguirse por cuánta agua traía la muestra.
+
+**Método** (`clustering.control_psol`, ahora impreso por la etapa 4 en cada corrida):
+`pSol` se residualiza contra la química de laboratorio (pFe, pCu, pMo); `eta²` del
+residuo por grupo; control = mismo `eta²` con las etiquetas corridas en el tiempo
+(circular, ≥14 muestras ≈ 5 semanas), pasa si `eta² ≤ p95` del control.
+
+**Grupos actuales (k=4): NO PASA.** `eta²` 0.166 contra p95 0.099. El grupo "Fe"
+tiene pSol mediano 28.3 % (residuo +3.2 puntos a química fija) contra 20-23 % del
+resto: es en buena parte el grupo de **muestras con más sólido**. A química fija,
+el pSol p10→p90 mueve `lr_fe_cu` +0.96 sd, `lr_zn_cu` −0.59 y `lr_mo_cu` −0.47:
+la corrección `dil` de la etapa 3 no alcanza (coherente con su techo, §19.10).
+
+**Variantes de features** (`scripts/prueba_grupos_psol.py`; GMM ajustado solo en
+train; compósito = ventana centrada, solo posterior a `FECHA_CORTE_TRAIN`):
+
+```
+variante              k  eta2_pSol p95   pasa  bd_Fe bd_Cu bd_Mo  comp_cu comp_fe comp_mo  n   estab
+actual (Fe, Zn, Mo)   4  0.165   0.101  NO    0.258 0.259 0.536  0.037   0.208   0.600   182 0.856
+actual (Fe, Zn, Mo)   3  0.028   0.048  sí    0.188 0.175 0.507  0.038   0.172   0.568   187 0.661
+actual (Fe, Zn, Mo)   2  0.016   0.039  sí    0.183 0.086 0.249  0.001   0.098   0.220   208 0.958
+Fe a la mitad         4  0.027   0.047  sí    0.194 0.116 0.570  0.086   0.194   0.591   177 0.450
+sin Fe (Zn, Mo)       4  0.022   0.046  sí    0.152 0.047 0.598  0.095   0.152   0.587   179 0.680
+solo Mo               4  0.029   0.046  sí    0.148 0.027 0.748  0.168   0.243   0.717   154 0.870
+solo Mo               3  0.022   0.048  sí    0.173 0.029 0.652  0.084   0.129   0.574   188 0.904
+solo Zn               2-4  0.031-0.062        NO    ~0    ~0    ~0     (no separa química)
+```
+
+**Lectura.**
+- El problema de agua es **del k=4 con Fe a peso completo**: k=2 y k=3 pasan, y
+  bajar el peso de `lr_fe_cu` a 0.5 lo hace pasar (pero la estabilidad cae a 0.45).
+- **"solo Mo, k=4" pasa el control y gana en todo lo externo**: compósito fuera de
+  muestra cu 0.168 / fe 0.243 / mo 0.717 (actual: 0.037 / 0.208 / 0.600) y BD
+  Mo 0.748, estable (0.870). Es exactamente lo que dice §19: el concentrado es un
+  **gradiente de Mo**, y la mejor "partición" es rebanarlo; los grupos actuales
+  le agregan una rebanada de agua (el "Fe").
+- "solo Zn" no pasa y no separa química: `lr_zn_cu` es invariante al agua por
+  física pero no lleva información de composición útil acá.
+- Robustez: con pZn en la química de control (313 muestras) las conclusiones no
+  cambian (actual k=4 0.157 vs p95 0.112 NO; solo Mo k=4 0.041 vs 0.055 sí).
+
+**Decisión pendiente (no aplicada).** La etapa 4 sigue con `K_GRUPOS=4` sobre las
+tres features; solo se agregó el control. Cambiar a "solo Mo" o a k=3 cambia las
+etiquetas que consume la etapa 5 y el monitor en línea: decidir antes de tocarlo.
+
+**PENDIENTE para la sesión del 2026-10-26** (acordado con el usuario el 2026-10-25):
+1. Revisar los compósitos que publique el laboratorio: 25-oct 07:30 (el monitor
+   estimó Cu **22.86**, caída de ~26 a ~22 tras el rearranque de planta del 24-oct
+   ~21:00: ¿real o del courier?), 25-oct 19:30 y 26-oct 07:30. Comparar en
+   `reports/tendencia_en_linea.html` / `data/final/en_linea.csv`.
+2. Con eso, decidir si se adopta **"solo Mo, k=4"** en la etapa 4. Si sí: cambiar
+   las features del GMM en `clustering.py`, correr etapas 4→9, comparar métricas del
+   compósito contra la línea base (§19.15: Mo 0.839 / Cu 0.265 / Fe 0.160 con
+   Kalman, n=253), verificar que el control de pSol pase, y reiniciar el monitor
+   en línea (carga el código al arrancar).
+
+---
+
+## 21. Sesión 2026-10-25 (2) — intensidades de cabeza (rebose HC L1/L2): cierra §16.5(1)
+
+`scripts/cabeza_intensidades.py` (`--extraer` re-baja los crudos del PI a
+`data/raw/courier_cabeza_L1_pi.csv`, `..._L2_pi.csv` y `composito_cabeza_pi.csv`).
+Lecturas reconstruidas con la 1a (`lecturas_por_evento`), fuera > 5 MAD.
+
+**Disponibilidad.** L2: 9,415 lecturas válidas continuas 2026-03-01 → hoy (cada
+~23 min). L1: 3,302, en la práctica solo ago-oct (73 % de los eventos del PI son
+todo-cero: línea fuera de rotación hasta agosto).
+
+**A. El courier SÍ lee la cabeza.** Intensidades L2 promediadas en la ventana
+centrada contra el compósito de cabeza (n=369, mar-oct), Ridge con CV por bloques
+de tiempo y purga 2 d, R² fuera de fold: **Mo 0.726, Fe 0.614, Cu 0.454, Zn 0.342**.
+Señal física coherente: `lr_fe_cu` ↔ Fe ρ +0.74, `lr_zn_cu` ↔ Cu ρ −0.72.
+Es una **ley de cabeza en línea**, cada 12 h sin esperar al laboratorio, y
+mejor que la del concentrado en Fe y Cu (porque en la cabeza esas leyes sí varían).
+
+**B. NO mejora la estimación del concentrado.** Base = `<ley>_est` de la etapa 8,
+tratamiento = base + 4 features de cabeza; control = cabeza corrida ≥14 días
+(60 corrimientos), piso `MEJORA_MIN`=0.01:
+
+```
+                 lag 0 (L2, n=351)      cabeza 2 h antes      cabeza 4 h antes     L1 lag 0 (n=123)
+pCu   0.281 -> 0.265 (-0.016)          -0.017                -0.030                -0.068
+pFe   0.092 -> 0.011 (-0.081)          -0.068                -0.095                -0.029
+pMo   0.849 -> 0.857 (+0.008, p95 0.007, bajo el piso)  +0.007  +0.008             -0.003
+```
+
+Ninguna celda aporta. Mismo resultado y misma razón que §16 con el compósito de
+cabeza: lo que la cabeza sabe del Mo del concentrado ya lo ven los rayos X del
+concentrado, y en Cu/Fe la cabeza agrega ruido. **No volver a probar la cabeza
+como feature de regresión del concentrado** (compósito ni intensidades, con o sin
+desfase).
+
+**Lo que sí queda abierto:** usar la ley de cabeza en línea (A) para lo que §15.5
+mostró que sirve — tipo de mineral de la alimentación en tiempo real (ancla de
+fase de mina, régimen de recuperación), y los tipos de cabeza (`tipos_mineral.py`,
+k=3) asignados desde intensidades en vez de esperar al compósito.
+
+**PENDIENTE para la sesión del 2026-10-26 — cabeza** (acordado el 2026-10-25, se
+suma al pendiente de §20):
+3. **Idea b — ley de cabeza en línea con modelos locales por tipo.** Reusar el
+   pipeline del concentrado sobre `RebHidroL2` (L1 solo ago-oct): etapas 1a, 2, 4
+   (+ control pSol con BD sample 17/18), 5, 6, 8 y Kalman. Diferencias: referencia
+   = compósito de cabeza (no hay puntuales suficientes) y corte propio de train
+   (intensidades desde 2026-03-01; con FECHA_CORTE_TRAIN quedarían 3 meses).
+   Global vs local por tipo (`tipos_mineral.py`, k=3), con control aleatorio.
+4. **Idea a — gating del concentrado por tipo de cabeza** (cierra §16.5-2): el tipo
+   de cabeza elige el modelo del concentrado. Expectativa baja; control obligatorio.
+5. **Regla operativa:** las pruebas de cabeza escriben solo archivos propios y no
+   corren `notebooks/0x` (el monitor en línea los usa cada 20 min). Adoptar
+   "solo Mo, k=4" SÍ afecta al monitor: detenerlo → cambiar y correr 4→9 →
+   revisar métricas → reiniciarlo (o revertir).

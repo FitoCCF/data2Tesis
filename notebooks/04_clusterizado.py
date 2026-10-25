@@ -5,6 +5,7 @@
 # 1. Diagnóstico del número de grupos sobre train (silhouette + estabilidad).
 # 2. GMM con K_GRUPOS, ajustado SOLO con train & valida, aplicado a todo.
 # 3. Caracterización de cada grupo contra el laboratorio (BD y compósito).
+# 3b. Control de dilución: el pSol de laboratorio no debería distinguir grupos.
 # 4. Producción (septiembre): a qué grupo pertenece cada lectura, por semana.
 # La lógica vive en src/pipeline/clustering.py.
 #
@@ -23,7 +24,8 @@ import joblib
 import pandas as pd
 
 from src.pipeline.config import ESCALADO, CLUSTERIZADO, MODELS_DIR, ART_GMM, LIMPIO_COMPOSITO, K_GRUPOS
-from src.pipeline.clustering import diagnostico_k, entrenar, asignar, caracterizar
+from src.pipeline.clustering import (diagnostico_k, entrenar, asignar, caracterizar, control_psol,
+                                     resumen_control_psol)
 
 _ap = argparse.ArgumentParser(add_help=False)
 _ap.add_argument('--sin-diagnostico', action='store_true')
@@ -44,7 +46,10 @@ joblib.dump(gmm, MODELS_DIR / ART_GMM)
 print(f"\n== k={args.k}: grupos {gmm.nombres_} ==")
 print(caracterizar(df, comp).to_string())
 
-v = df[df['valida'] & (df['fuente'] != 'bd')]
+print("\n== Control de dilución: ¿los grupos separan agua? (pSol de laboratorio, a química fija) ==")
+print(resumen_control_psol(control_psol(df)))
+
+v =df[df['valida'] & (df['fuente'] != 'bd')]
 racha = v['grupo_id'].ne(v['grupo_id'].shift()).cumsum()
 print(f"\nPermanencia en un grupo (lecturas seguidas): mediana {v.groupby(racha).size().median():.0f}, "
       f"p90 {v.groupby(racha).size().quantile(.9):.0f}  (1 lectura ≈ 21 min)")

@@ -139,6 +139,71 @@ def caracterizar(df: pd.DataFrame, composito: pd.DataFrame | None = None,
     return pd.concat(partes, axis=1)
 
 
+PSOL_VALIDO = (5, 100)        # pSol de la BD fuera de esto es error de captura (hay un 295 y un 0)
+QUIMICA_PSOL = ["pFe", "pCu", "pMo"]
+SEPARACION_CONTROL = 14       # muestras de la BD (~5 semanas): corrimiento mínimo del control circular
+
+
+def _eta2(y: np.ndarray, g: np.ndarray) -> float:
+    """Fracción de la varianza de y explicada por el grupo (entre / total)."""
+    media = y.mean()
+    entre = sum(len(y[g == k]) * (y[g == k].mean() - media) ** 2 for k in np.unique(g))
+    return float(entre / ((y - media) ** 2).sum())
+
+
+def control_psol(df: pd.DataFrame, col_grupo: str = "grupo") -> dict:
+    """Control de dilución de los grupos con el %sólido de laboratorio (pSol).
+
+    Un grupo de mineral no debería distinguirse por cuánta agua traía la
+    muestra. Sobre las muestras de la BD (valida_ley, pSol en PSOL_VALIDO):
+      1. pSol se residualiza contra la química de laboratorio (pFe, pCu, pMo):
+         lo que queda es agua que la química no explica;
+      2. eta2_psol = fracción de ese residuo que explica el grupo;
+      3. control: el mismo eta² con las etiquetas corridas en el tiempo
+         (corrimiento circular >= SEPARACION_CONTROL muestras), que conserva
+         las rachas de los grupos y la deriva del pSol pero rompe el calce.
+         Pasa si eta2_psol <= p95 del control.
+    También devuelve eta2_quimica (cuánto separan los grupos las leyes: se
+    quiere alto) y, por feature, cuánto la mueve el pSol a química fija, en
+    desviaciones estándar entre el p10 y el p90 del pSol.
+    pSol no existe en línea: esto es un juez de la partición, no una feature.
+    """
+    m = df[df["valida_ley"] & df["pSol"].between(*PSOL_VALIDO, inclusive="right")
+           & df[QUIMICA_PSOL].notna().all(axis=1)].sort_values("ts")
+    X = np.column_stack([np.ones(len(m)), m[QUIMICA_PSOL].to_numpy()])
+    psol = m["pSol"].to_numpy()
+    resid = psol - X @ np.linalg.lstsq(X, psol, rcond=None)[0]
+    g = m[col_grupo].to_numpy()
+
+    real = _eta2(resid, g)
+    n = len(m)
+    control = np.array([_eta2(resid, np.roll(g, s)) for s in range(SEPARACION_CONTROL, n - SEPARACION_CONTROL + 1)])
+    p95 = float(np.quantile(control, 0.95))
+
+    rango = np.subtract(*np.quantile(psol, [0.9, 0.1]))
+    Xp = np.column_stack([X, psol])
+    sens = {f: float(np.linalg.lstsq(Xp, m[f].to_numpy(), rcond=None)[0][-1] * rango / m[f].std())
+            for f in FEATS_ESCALADAS}
+
+    por_grupo = (m.assign(pSol_resid=resid).groupby(col_grupo)
+                 .agg(n=("pSol", "size"), pSol_mediana=("pSol", "median"), pSol_resid=("pSol_resid", "mean"))
+                 .round(2))
+    return {"n": n, "eta2_psol": real, "p95_control": p95, "pasa": real <= p95,
+            "eta2_quimica": {c: _eta2(m[c].to_numpy(), g) for c in QUIMICA_PSOL},
+            "sensibilidad_sd": sens, "por_grupo": por_grupo}
+
+
+def resumen_control_psol(c: dict) -> str:
+    q = " ".join(f"{k} {v:.2f}" for k, v in c["eta2_quimica"].items())
+    s = " ".join(f"{k.removesuffix('_z')} {v:+.2f}" for k, v in c["sensibilidad_sd"].items())
+    veredicto = "PASA" if c["pasa"] else "NO PASA: los grupos separan agua, no solo mineral"
+    return (f"{c['por_grupo'].to_string()}\n"
+            f"eta² del pSol a química fija: {c['eta2_psol']:.3f} (control p95 {c['p95_control']:.3f}, "
+            f"n={c['n']}) -> {veredicto}\n"
+            f"eta² de la química (más alto = mejor): {q}\n"
+            f"pSol p10->p90 mueve cada feature (sd, a química fija): {s}")
+
+
 def _main():
     import argparse
     import joblib
@@ -163,6 +228,7 @@ def _main():
     df.to_csv(args.output, index=False)
     comp = pd.read_csv(LIMPIO_COMPOSITO, parse_dates=["ts"])
     print(caracterizar(df, comp).to_string())
+    print("\nControl de dilución (pSol de laboratorio):\n" + resumen_control_psol(control_psol(df)))
     if args.gmm_in is None:
         joblib.dump(gmm, args.gmm_out)
         print(f"GMM guardado en: {args.gmm_out}")
