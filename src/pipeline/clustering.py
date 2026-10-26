@@ -2,6 +2,8 @@
 # ============================================================
 # src/pipeline/clustering.py — Etapa 4: grupos de mineral (GMM)
 # ============================================================
+# AlimConc: el GMM usa FEATS_GMM (config; hoy solo lr_mo_cu_z, tramos Mo1..Mo4).
+# Lo de abajo describe la versión de 3 log-cocientes (rama data2TesisV2).
 # GMM de covarianza completa sobre los 3 log-cocientes escalados (etapa 3),
 # AJUSTADO SOLO con las lecturas válidas del período 'train' y aplicado a
 # todas (train, test, producción).
@@ -39,7 +41,7 @@ import pandas as pd
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.mixture import GaussianMixture
 
-from .config import RANDOM_STATE, K_GRUPOS
+from .config import RANDOM_STATE, K_GRUPOS, FEATS_GMM
 from .escalado import FEATS_ESCALADAS
 
 ELEMENTO_DE_FEATURE = {"lr_fe_cu_z": "Fe", "lr_zn_cu_z": "Zn", "lr_mo_cu_z": "Mo"}
@@ -47,7 +49,7 @@ UMBRAL_NOMBRE = 0.3
 
 
 def _train(df: pd.DataFrame) -> np.ndarray:
-    return df.loc[(df["periodo"] == "train") & df["valida"], FEATS_ESCALADAS].to_numpy()
+    return df.loc[(df["periodo"] == "train") & df["valida"], FEATS_GMM].to_numpy()
 
 
 def diagnostico_k(df: pd.DataFrame, k_min: int = 2, k_max: int = 8, n_mitades: int = 3) -> pd.DataFrame:
@@ -77,10 +79,16 @@ def diagnostico_k(df: pd.DataFrame, k_min: int = 2, k_max: int = 8, n_mitades: i
 
 
 def nombrar_grupos(gmm: GaussianMixture) -> dict[int, str]:
-    """{id del GMM -> nombre} según los elementos que el centroide sobre-representa."""
+    """{id del GMM -> nombre}. Con una sola feature (FEATS_GMM) los grupos son tramos
+    de un gradiente: se nombran <elemento><orden> de menor a mayor centroide (Mo1..Mo4).
+    Con varias, por los elementos que el centroide sobre-representa."""
+    if len(FEATS_GMM) == 1:
+        elem = ELEMENTO_DE_FEATURE[FEATS_GMM[0]]
+        orden = np.argsort(gmm.means_[:, 0])
+        return {int(i): f"{elem}{r + 1}" for r, i in enumerate(orden)}
     nombres = {}
     for i, centro in enumerate(gmm.means_):
-        altos = sorted(((z, ELEMENTO_DE_FEATURE[f]) for f, z in zip(FEATS_ESCALADAS, centro) if z > UMBRAL_NOMBRE),
+        altos = sorted(((z, ELEMENTO_DE_FEATURE[f]) for f, z in zip(FEATS_GMM, centro) if z > UMBRAL_NOMBRE),
                        reverse=True)
         nombres[i] = "+".join(e for _, e in altos) if altos else "Cu"
     if len(set(nombres.values())) < len(nombres):          # dos grupos con el mismo nombre: se numeran
@@ -101,7 +109,7 @@ def entrenar(df: pd.DataFrame, k: int = K_GRUPOS) -> GaussianMixture:
 def asignar(df: pd.DataFrame, gmm: GaussianMixture) -> pd.DataFrame:
     """Agrega grupo_id, grupo (nombre) y prob_grupo (probabilidad posterior del asignado)."""
     df = df.copy()
-    post = gmm.predict_proba(df[FEATS_ESCALADAS].to_numpy())
+    post = gmm.predict_proba(df[FEATS_GMM].to_numpy())
     df["grupo_id"] = post.argmax(axis=1)
     df["grupo"] = df["grupo_id"].map(gmm.nombres_)
     df["prob_grupo"] = post.max(axis=1).round(3)
@@ -114,7 +122,7 @@ def caracterizar(df: pd.DataFrame, composito: pd.DataFrame | None = None,
 
     - Leyes de la BD (muestras valida_ley) promediadas por grupo.
     - Compósito de 12 h: se le asigna el grupo mayoritario de las lecturas
-      válidas de las 12 h previas, solo si ese grupo es >= min_mayoria de
+      válidas de su ventana CENTRADA (±6 h, verificada en §12), solo si ese grupo es >= min_mayoria de
       >= min_lecturas lecturas (ventanas mezcladas no se usan).
     - Reparto de lecturas válidas por período (% de cada período).
     """
@@ -125,7 +133,7 @@ def caracterizar(df: pd.DataFrame, composito: pd.DataFrame | None = None,
         lect = df[df["valida"] & (df["fuente"] != "bd")].set_index("ts").sort_index()["grupo"]
         filas = []
         for t, r in composito[composito["ts"] >= lect.index.min()].set_index("ts").iterrows():
-            w = lect.loc[t - pd.Timedelta("12h"):t]
+            w = lect.loc[t - pd.Timedelta("6h"):t + pd.Timedelta("6h")]
             if len(w) >= min_lecturas and w.value_counts(normalize=True).iloc[0] >= min_mayoria:
                 filas.append({"grupo": w.mode()[0], "cu": r["cu"], "fe": r["fe"], "mo": r["mo"], "ins": r["ins"]})
         c = pd.DataFrame(filas)

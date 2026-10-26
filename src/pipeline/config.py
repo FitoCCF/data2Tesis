@@ -115,6 +115,11 @@ DIL_CORREGIR = ["lr_fe_cu"]
 ESCALADO = DATA_PROCESSED / "courier_escalado.csv"       # salida de la etapa 3 (+ columnas <feature>_z)
 CLUSTERIZADO = DATA_PROCESSED / "courier_clusterizado.csv"  # salida de la etapa 4
 ESTIMADO = DATA_PROCESSED / "courier_estimado.csv"       # salida de la etapa 6 (+ columnas <ley>_est)
+# AlimConc (2026-10-26, bitácora §20/§23): el GMM ve SOLO lr_mo_cu. Con Fe/Zn/Mo el k=4 no
+# pasaba el control de pSol (un grupo "Fe" = muestras de más sólido, eta² 0.166 vs p95 0.099);
+# solo Mo pasa (0.029 vs 0.046) y explica mejor el compósito fuera de muestra. Los grupos son
+# tramos del gradiente de Mo (§19), nombrados Mo1 (bajo) ... Mo4 (alto).
+FEATS_GMM = ["lr_mo_cu_z"]
 K_GRUPOS = 4                  # grupos del GMM (etapa 4). Elegido por diagnostico_k(): silhouette 0.249 y
                               # ARI 0.856, máximo local para k>=3, y cada grupo sobre-representa un elemento
                               # distinto confirmado por laboratorio. k=2 es la alternativa más estable (ARI 0.96).

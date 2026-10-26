@@ -2488,3 +2488,150 @@ suma al pendiente de §20):
    corren `notebooks/0x` (el monitor en línea los usa cada 20 min). Adoptar
    "solo Mo, k=4" SÍ afecta al monitor: detenerlo → cambiar y correr 4→9 →
    revisar métricas → reiniciarlo (o revertir).
+
+---
+
+## 22. 2026-10-26 — el modelo en línea FALLÓ el Cu ante un cambio de mineral
+
+**Hecho.** Compósito 2026-10-25 07:30 (primer turno completo tras la parada de
+planta 22-24 oct): estimado (Kalman) Cu **22.86**, laboratorio **25.07** → error
+**−2.21**, más del doble del MAE típico (0.99 en 102 compósitos sep-oct). Fe +0.88
+y Mo +0.20 quedaron en su rango. El monitor venía mostrando la "caída" de Cu de
+~26 a ~22 desde el rearranque del 24-oct ~21:00: **no era real**.
+
+**Causa (diagnóstico, no demostrado):** entró mineral distinto tras la parada.
+- Compósito de **cabeza**: Zn/Cu 0.009-0.012 (18-21 oct) → **0.015-0.021**
+  (23-24 oct); Mo 0.014-0.021 → 0.022-0.029.
+- Courier del concentrado: `lr_zn_cu` −5.25/−5.32 → **−5.07/−5.13**; `lr_mo_cu`
+  −2.86 → −2.60. Las 102 lecturas desde el 24-oct son válidas: no es falla del
+  instrumento.
+- La regresión aprendió en train "más Zn relativo al Cu ⇒ menos Cu". Con este
+  mineral el Zn subió y el Cu del concentrado no se movió (~25). Una relación débil
+  (el Cu casi no varía, CV 7.5 %, §19.12) que **se rompe fuera del rango de mineral
+  visto en train**. El Kalman no lo corrige: solo ajusta nivel con compósitos ya
+  publicados y llega ~20 h tarde.
+- El 26-oct de madrugada `lr_zn_cu` vuelve a −5.17 y la estimación de Cu a ~25.8.
+
+**Lecciones.**
+1. Una estimación de Cu que se aleja > 2 puntos de su nivel reciente **no es
+   confiable por sí sola**; tratarla como alerta a confirmar, no como dato.
+2. El monitor necesita un **aviso de mineral fuera de rango** (features fuera del
+   soporte de train, p. ej. `lr_zn_cu` por encima del p99 de train) para marcar
+   la estimación como no confiable.
+3. La cabeza vio el cambio (Zn/Cu y Mo) antes y con laboratorio propio: refuerza
+   las pruebas de cabeza (§21, ideas a y b) — en especial la (a), el tipo de cabeza
+   como selector del modelo del concentrado, que apunta justo a este caso.
+
+## 23. 2026-10-26 — rama `AlimConc`: grupos "solo Mo, k=4" y ley de cabeza en línea
+
+**Copia.** `git worktree` en `~/AlimConc`, rama `AlimConc` desde 9c1d643, con
+`data/`, `models/` y `reports/` copiados del estado del 26-oct. El monitor en línea
+sigue corriendo en `~/data2TesisV2` con los grupos viejos: nada de lo de abajo lo toca.
+
+### 23.1 Pendiente 2 — etapa 4 con "solo Mo, k=4"
+
+Cambio: `config.FEATS_GMM = ["lr_mo_cu_z"]`; `clustering.py` usa `FEATS_GMM` y
+nombra los tramos `Mo1` (bajo) … `Mo4` (alto). De paso `caracterizar` pasa a la
+ventana centrada (±6 h, §12) en vez de las 12 h previas.
+
+Grupos (BD / compósito): Mo1 0.83 / 0.81 %Mo, Mo2 1.30 / 1.23, Mo3 1.84 / 1.82,
+Mo4 2.75 / 2.84. Control de `pSol`: **0.029 vs p95 0.046 → PASA** (el actual: 0.166
+vs 0.099, no pasa). Permanencia mediana 2 lecturas: son tramos de un continuo, la
+lectura salta entre vecinos.
+
+Comparación en igualdad de datos (los dos corridos en la copia, etapas 4→9;
+compósitos sin anomalías, fuera de muestra, n=255; la línea base reproduce §19.15):
+
+| ley | base R² (Kalman) | solo Mo R² (Kalman) | base MAE | solo Mo MAE |
+|---|---|---|---|---|
+| Mo | 0.840 | **0.842** | 0.204 | **0.200** |
+| Cu | 0.261 | 0.261 | 1.230 | 1.230 |
+| Fe | 0.156 | 0.156 | 0.886 | 0.886 |
+
+Sin Kalman Mo 0.822 → 0.830. Test BD Mo 0.723 → 0.742. Fe y Cu **idénticos**: siguen
+globales. La etapa 5 rutea un único local, `pMo/Mo1` (pctl 98.5 del control), y de ahí
+la mejora pequeña de Mo. **Veredicto:** no empeora nada, mejora Mo un poco y los
+grupos dejan de separar agua → adoptable. Para llevarlo al monitor: detener el de
+`data2TesisV2` y arrancarlo desde `~/AlimConc`, o hacer merge de la rama.
+
+### 23.2 Pendiente 3 (idea b) — ley de cabeza en línea (`scripts/cabeza_ley_en_linea.py`)
+
+RebHidroL2, lecturas por evento → log-cocientes + logSumI → media en la ventana
+centrada de cada compósito de cabeza → Ridge por ley → Kalman (q en train).
+Corte propio: train 2026-03-01 → 07-31 (259 compósitos), test 08-01 → 10-25 (111).
+Datos de cabeza re-extraídos del PI el 26-oct solo en la copia.
+
+Test (compósito de cabeza):
+
+| ley | modelo R² | + Kalman R² | MAE (Kalman) | persistencia R² |
+|---|---|---|---|---|
+| Cu | 0.394 | **0.406** | 0.039 | 0.201 |
+| Fe | 0.546 | **0.601** | 0.260 | 0.465 |
+| Mo | 0.820 | **0.832** | 0.0051 | 0.596 |
+
+Las tres le ganan a la persistencia (el último compósito publicado): el courier de
+cabeza **sí** da la ley de alimentación en línea.
+
+**Global vs local por tipo de cabeza** (tipos_mineral k=3: Cu / Fe+Zn / Mo; control
+200 particiones barajadas):
+- En línea el tipo se **predice** desde las intensidades (logística en train): acierto
+  0.73 en test (mayoritaria 0.48).
+- Con tipo predicho: Cu pasa por poco (+0.075 vs p95 0.049); Fe y Mo no.
+- Con el tipo real del lab (oráculo): Fe (+0.063) y Mo (+0.032) pasan; Cu no (+0.019).
+- **Lectura:** los locales tienen señal si se conoce el tipo, pero el cuello de botella
+  es **predecir** el tipo (73 %). El "LOCAL" de Cu con tipo predicho contradice al
+  oráculo → frágil, no adoptar sin más datos. Recomendación: **global** para las tres.
+
+Primer compósito tras el cambio de mineral (25-oct 07:30): Cu 0.470 vs 0.487, Fe 2.57
+vs 2.52, Mo **0.0237 vs 0.029**: subestima el Mo alto del mineral nuevo, igual que el
+concentrado se equivocó en Cu (§22).
+
+Salidas: `data/final/cabeza_estimado_L2.csv` (por lectura, global),
+`eval_cabeza_L2.csv`, `eval_cabeza_L2_metricas.csv`.
+
+### 23.3 Pistas combinadas para el tipo de cabeza, y el tipo de cabeza en el concentrado (idea a)
+
+`scripts/cabeza_tipo_combinado.py`. Cambio respecto de §23.2: los locales se entrenan
+con el tipo **del lab** en train (no con el predicho) y se rutean con el tipo predicho.
+Control: 200 repeticiones con etiquetas de train y probabilidades de test barajadas.
+
+**Parte 1, cabeza** (mejora de R² sobre el global en test; ✔ = pasa control y ≥ 0.01):
+
+| pista | acierto del tipo | Cu | Fe | Mo |
+|---|---|---|---|---|
+| intensidades, duro | 0.73 | −0.077 | **+0.071 ✔** | **+0.020 ✔** |
+| intensidades, suave | 0.73 | −0.017 | **+0.065 ✔** | +0.008 |
+| lab publicado hace 24 h | 0.71 | 0.000 | −0.045 | −0.005 |
+| intens. + lab 24 h, suave | 0.75 | −0.014 | **+0.064 ✔** | **+0.012 ✔** |
+| lab publicado hace 12 h | 0.81 | +0.006 | +0.054 ✔ | +0.005 |
+| oráculo (tipo real) | 1.00 | +0.019 | +0.063 ✔ | +0.032 ✔ |
+| tipos GMM desde intensidades, suave | — | −0.121 | +0.054 ✔ | +0.013 ✔ |
+
+- Combinar pistas apenas sube el acierto (0.73 → 0.75). El lab de hace 12 h llega a 0.81,
+  pero no es realista: el compósito tarda 12-24 h en publicarse.
+- **Fe de cabeza sí mejora con locales** (≈ +0.07, R² 0.55 → ~0.62), estable en casi todas
+  las variantes: es señal, no suerte. El Mo mejora poco (+0.01-0.02) y de forma marginal.
+  **El Cu nunca mejora.**
+- Se probaron ~10 variantes; un "✔" aislado puede ser azar. Lo robusto es el Fe.
+
+**Parte 2, concentrado** (era con cabeza: train 253 / test 99 compósitos; base `<ley>_kal`):
+- **Selector** (offset por tipo de cabeza sobre el Kalman): **no aporta en ninguna ley, ni
+  siquiera con el tipo real** (Cu +0.004/−0.002, Fe empeora, Mo +0.003).
+- **Aviso** "tipo actual ≠ último publicado": se enciende en el 43 % de los compósitos y el
+  error del concentrado **no** es mayor cuando se enciende (razón 0.77-0.98, p95 ~1.15-1.26).
+  **No marcó el fallo del 25-oct** (Fe+Zn ahora y publicado).
+
+**Veredicto.** Los grupos de cabeza sirven **solo para el Fe de cabeza** (y un poco de Mo).
+**Idea a cerrada (§16.5-2): el tipo de cabeza no mejora ni avisa en el concentrado.**
+El aviso de §22 tiene que venir de features fuera de rango en el propio concentrado,
+no del tipo de cabeza.
+
+### 23.4 Tercer monitor: ley de cabeza en línea (`scripts/en_linea_cabeza.py`)
+
+Proceso independiente de `en_linea.py`. Ridge global por ley (RebHidroL2), ajustado una
+vez al arrancar con los 259 compósitos de train; Kalman con q de train; ventana centrada
+con ≥ 10 lecturas. Salidas: `data/final/en_linea_cabeza.csv` y
+`reports/tendencia_cabeza.{png,html}`. `tendencia_en_linea.py` se parametrizó con un `Perfil`;
+la salida del concentrado no cambia (solo el `<title>`).
+Trampa corregida: un compósito publicado sin estimación (parada 22-24 oct) dejaba el sesgo
+del Kalman en NaN para siempre → el Kalman de cabeza solo ve compósitos con estimación.

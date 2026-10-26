@@ -1,5 +1,9 @@
 # data2TesisV2
 
+> **Rama `AlimConc`** (worktree `~/AlimConc`, 2026-10-26): copia del pipeline con la etapa 4
+> "solo Mo, k=4" (`config.FEATS_GMM`) y la ley de cabeza en línea
+> (`scripts/cabeza_ley_en_linea.py`). Ver bitácora §23. El monitor de `~/data2TesisV2` no usa esta rama.
+
 Branch huérfano de `data2Tesis` (mismo repo remoto, `FitoCCF/data2Tesis`,
 sin historia git compartida), clonado en su propia carpeta. Reescritura
 completa del pipeline de `data2Tesis`, desacoplada (`src/pipeline/*.py`,
