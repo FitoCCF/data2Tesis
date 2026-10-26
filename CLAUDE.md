@@ -23,24 +23,7 @@ circuito, orden escalado/ortogonalización) que no se sostuvieron.
   ni filtrar info industrial". Si hace falta subir un CSV o una figura
   puntual, `git add -f`, pero no por defecto.
 
-## Flujo del pipeline (revisado 2026-09-30, etapas 0-6, 8, 9)
-
-```
-00_getdata            crudos por fuente: courier_bd / courier_pi (recorded) / composito_pi
-01a_limpieza_fuentes  PI -> una fila por lectura real (por evento, 5 canales juntos); BD -> leyes 0 = NaN, duplicados unidos
-01b_unificacion       tabla maestra: BD pegada al PI por VALOR de los 4 metales (fuente pi/ambos/bd)
-01c_limpieza          periodo (train <= FECHA_CORTE_TRAIN / test / produccion), anomalia, valida, valida_ley
-02_features           log-cocientes vs Cu (clustering) + fracciones y logSumI (regresión) + dil
-03_escalado           corrección de dilución (solo Fe/Cu) + StandardScaler, ajustados en train
-04_clusterizado       GMM K_GRUPOS=4 (Cu/Mo/Zn/Fe), diagnóstico de k, caracterización vs lab
-05_modelos_locales    walk-forward (split_purgado) + control aleatorio -> bundle (hoy: todo global)
-06_inferencia_hibrida <ley>_est por lectura -> courier_estimado.csv
-08_evaluacion_lab...  vs compósito 12 h, sin/con Kalman -> data/final/eval_composito*.csv, fig_08_*
-09_evaluacion_vs_lab  vs muestras BD (OOF histórico + test) -> eval_bd_metricas.csv, fig_09_*
-```
-
-`pixi run test` corre los 18 tests de `split_purgado`. La evaluación vive en
-`src/evaluacion/` (`evaluar.py` + `figuras.py`); la 9 lee lo que escribe la 8.
+## Reglas del pipeline
 
 Todo lo que se ajusta usa solo `periodo == 'train'` (también el `q` del
 Kalman). Ninguna etapa borra filas por una bandera: marca. `run_pipeline.py`,

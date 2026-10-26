@@ -2488,3 +2488,36 @@ suma al pendiente de §20):
    corren `notebooks/0x` (el monitor en línea los usa cada 20 min). Adoptar
    "solo Mo, k=4" SÍ afecta al monitor: detenerlo → cambiar y correr 4→9 →
    revisar métricas → reiniciarlo (o revertir).
+
+---
+
+## 22. 2026-10-26 — el modelo en línea FALLÓ el Cu ante un cambio de mineral
+
+**Hecho.** Compósito 2026-10-25 07:30 (primer turno completo tras la parada de
+planta 22-24 oct): estimado (Kalman) Cu **22.86**, laboratorio **25.07** → error
+**−2.21**, más del doble del MAE típico (0.99 en 102 compósitos sep-oct). Fe +0.88
+y Mo +0.20 quedaron en su rango. El monitor venía mostrando la "caída" de Cu de
+~26 a ~22 desde el rearranque del 24-oct ~21:00: **no era real**.
+
+**Causa (diagnóstico, no demostrado):** entró mineral distinto tras la parada.
+- Compósito de **cabeza**: Zn/Cu 0.009-0.012 (18-21 oct) → **0.015-0.021**
+  (23-24 oct); Mo 0.014-0.021 → 0.022-0.029.
+- Courier del concentrado: `lr_zn_cu` −5.25/−5.32 → **−5.07/−5.13**; `lr_mo_cu`
+  −2.86 → −2.60. Las 102 lecturas desde el 24-oct son válidas: no es falla del
+  instrumento.
+- La regresión aprendió en train "más Zn relativo al Cu ⇒ menos Cu". Con este
+  mineral el Zn subió y el Cu del concentrado no se movió (~25). Una relación débil
+  (el Cu casi no varía, CV 7.5 %, §19.12) que **se rompe fuera del rango de mineral
+  visto en train**. El Kalman no lo corrige: solo ajusta nivel con compósitos ya
+  publicados y llega ~20 h tarde.
+- El 26-oct de madrugada `lr_zn_cu` vuelve a −5.17 y la estimación de Cu a ~25.8.
+
+**Lecciones.**
+1. Una estimación de Cu que se aleja > 2 puntos de su nivel reciente **no es
+   confiable por sí sola**; tratarla como alerta a confirmar, no como dato.
+2. El monitor necesita un **aviso de mineral fuera de rango** (features fuera del
+   soporte de train, p. ej. `lr_zn_cu` por encima del p99 de train) para marcar
+   la estimación como no confiable.
+3. La cabeza vio el cambio (Zn/Cu y Mo) antes y con laboratorio propio: refuerza
+   las pruebas de cabeza (§21, ideas a y b) — en especial la (a), el tipo de cabeza
+   como selector del modelo del concentrado, que apunta justo a este caso.
