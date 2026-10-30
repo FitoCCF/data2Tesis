@@ -38,3 +38,4 @@ data/*.csv
 
 # Log del monitor en línea (docs/en_linea_oficina.md)
 en_linea.log
+en_linea_*.log

@@ -38,6 +38,7 @@ import pandas as pd
 
 from src.pipeline.config import ESTIMADO, DATA_FINAL, REPORTS_DIR, VENTANA_COMPOSITO_H, BLOQUE_RESAMPLE
 from src.evaluacion.evaluar import mascara_lecturas
+from src.evaluacion.descripcion import modelo_concentrado
 from src.evaluacion.figuras import SUPERFICIE, TINTA, TINTA_2, REJILLA, COLOR_LAB, COLOR_MODELO, COLOR_KALMAN
 
 EN_LINEA = DATA_FINAL / "en_linea.csv"
@@ -171,6 +172,7 @@ def pagina(C: pd.DataFrame, ultima: pd.Timestamp) -> None:
   .pie {{ color:{TINTA_2}; font-size:12px; }}
 </style></head><body>
 <h1 style="font-size:18px;margin:0 0 8px">Concentrado colectivo — estimación en línea vs compósito</h1>
+<p style="font-weight:600;margin:0 0 8px">{html.escape(modelo_concentrado())}</p>
 {aviso}
 <img src="tendencia_en_linea.png?v={datetime.now():%Y%m%d%H%M%S}" alt="Tendencia de Cu, Fe y Mo: modelo, Kalman y laboratorio">
 <div style="overflow-x:auto"><table><thead>
