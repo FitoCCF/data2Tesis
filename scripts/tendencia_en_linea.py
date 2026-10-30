@@ -41,6 +41,7 @@ import pandas as pd
 
 from src.pipeline.config import ESTIMADO, DATA_FINAL, REPORTS_DIR, VENTANA_COMPOSITO_H, BLOQUE_RESAMPLE
 from src.evaluacion.evaluar import mascara_lecturas
+from src.evaluacion.descripcion import modelo_concentrado
 from src.evaluacion.figuras import SUPERFICIE, TINTA, TINTA_2, REJILLA, COLOR_LAB, COLOR_MODELO, COLOR_KALMAN
 
 EN_LINEA = DATA_FINAL / "en_linea.csv"
@@ -69,6 +70,7 @@ class Perfil:
     leyes: list                                            # (columna, elemento, decimales)
     lecturas: Callable                                     # desde -> bloques de 30 min con <columna>_est
     monitor: str = "en_linea.py"
+    modelo: str = ""                                      # vacío = el GMM del concentrado
 
 
 CONCENTRADO = Perfil("Concentrado colectivo", EN_LINEA, PNG, HTML, LEYES, _lecturas)
@@ -190,6 +192,7 @@ def pagina(C: pd.DataFrame, ultima: pd.Timestamp, p: Perfil = CONCENTRADO) -> No
   .pie {{ color:{TINTA_2}; font-size:12px; }}
 </style></head><body>
 <h1 style="font-size:18px;margin:0 0 8px">{p.titulo} — estimación en línea vs compósito</h1>
+<p style="font-weight:600;margin:0 0 8px">{html.escape(p.modelo or modelo_concentrado())}</p>
 {aviso}
 <img src="{p.png.name}?v={datetime.now():%Y%m%d%H%M%S}" alt="Tendencia de Cu, Fe y Mo: modelo, Kalman y laboratorio">
 <div style="overflow-x:auto"><table><thead>

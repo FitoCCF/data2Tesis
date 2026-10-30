@@ -42,6 +42,7 @@ from scripts.cabeza_intensidades import CANALES, FEATS, MEDIA, MIN_LECTURAS, lec
 from scripts.cabeza_ley_en_linea import tabla_compositos, _ridge, LEYES, FIN_TRAIN_CABEZA
 from scripts.en_linea import MonitorEnLinea, SOLAPE
 from scripts import tendencia_en_linea as tend
+from src.evaluacion.descripcion import modelo_cabeza
 
 LINEA = "L2"
 SALIDA = DATA_FINAL / "en_linea_cabeza.csv"
@@ -56,6 +57,7 @@ class MonitorCabeza:
         self.modelos = {l: _ridge().fit(A.loc[tr, FEATS], A.loc[tr, l]) for l in LEYES}
         print(f"Modelo de cabeza {LINEA}: Ridge global ajustado con {tr.sum()} compósitos de train "
               f"(hasta {FIN_TRAIN_CABEZA})")
+        print(modelo_cabeza(LINEA))
 
     def adquirir(self) -> None:
         from src.acquisition.from_pi import cliente, _a_ancho, extraer_stream
@@ -128,7 +130,7 @@ class MonitorCabeza:
             perfil = tend.Perfil(f"Cabeza (rebose HC {LINEA})", SALIDA, REPORTS_DIR / "tendencia_cabeza.png",
                                  REPORTS_DIR / "tendencia_cabeza.html", [("cu", "Cu", 3), ("fe", "Fe", 2), ("mo", "Mo", 4)],
                                  lambda desde: bloques[bloques.index >= desde - MEDIA].reset_index(),
-                                 monitor="en_linea_cabeza.py")
+                                 monitor="en_linea_cabeza.py", modelo=modelo_cabeza(LINEA))
             tend.generar(7, perfil)
             print("  tendencia: reports/tendencia_cabeza.html")
         except Exception as e:

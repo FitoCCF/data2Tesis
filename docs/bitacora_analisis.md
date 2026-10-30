@@ -2635,3 +2635,165 @@ con ≥ 10 lecturas. Salidas: `data/final/en_linea_cabeza.csv` y
 la salida del concentrado no cambia (solo el `<title>`).
 Trampa corregida: un compósito publicado sin estimación (parada 22-24 oct) dejaba el sesgo
 del Kalman en NaN para siempre → el Kalman de cabeza solo ve compósitos con estimación.
+
+## 24. 2026-10-27 → 29 — seis monitores, Outocal como rival, prueba en ciego e incidentes de mineral
+
+### 24.1 El juez cambia: reemplazar el Outocal, no al laboratorio
+
+Dicho por el usuario (2026-10-28): el objetivo **no** es reemplazar al laboratorio
+sino estar lo más cerca de él; el objetivo es **reemplazar las ecuaciones del courier
+(Outocal)**. Las ecuaciones del Outocal son regresiones multivariables y, cada día
+después del reporte del compósito, el operador **corrige a mano el término
+independiente** (offset). Es un ajuste empírico, sin criterio matemático y con
+errores humanos de suma/resta. Consecuencias:
+
+- El Outocal (`_7100_ai_<linea>_<n>_abb`, `_7100_AIP_*_CAL`) es **solo el rival**:
+  no se usa como feature ni se fusiona/apila con el modelo (la "idea 1" de fusión
+  quedó descartada por eso).
+- Nuestro Kalman es la versión **automática y con criterio** de esa misma corrección
+  de offset: argumento central para la tesis y para planta.
+- Cómo compara planta (`data/Courier_AUTO-C2.xlsm`, no versionado): compósito 07:30 ↔
+  `_CAL` leído a las 18:30 del mismo día; compósito 19:30 ↔ `_CAL` a las 06:30 del día
+  siguiente → ventana de **guardia** `[t−1h, t+11h)`. Reglas del Excel: DIF = Lab − X;
+  mínimos conc. Cu 18 / Fe 22 / Mo 0.3, cabeza Cu 0.2 / Fe 1 / Mo 0.004; tolerancia =
+  media del lab × 0.06 (conc.) o × 0.11 (cabeza).
+
+### 24.2 Seis monitores en línea (`scripts/en_linea*.py`)
+
+| carpeta | monitor | modelo | ventana |
+|---|---|---|---|
+| `data2TesisV2` | `en_linea.py` | GMM k=4 (Fe, Zn, Mo) → **ningún grupo pasa el control: GLOBAL** → Kalman | centrada ±6 h |
+| `data2TesisV2` | `en_linea_excel.py --perfil concentrado` | el mismo | guardia |
+| `AlimConc` | `en_linea.py` | GMM solo Mo k=4 → local solo en Mo-Mo1, resto global → Kalman | centrada |
+| `AlimConc` | `en_linea_excel.py --perfil concentrado` | el mismo + **prueba en ciego** (24.5) | guardia |
+| `AlimConc` | `en_linea_cabeza.py` | Ridge global, courier de cabeza L2 → Kalman | centrada |
+| `AlimConc` | `en_linea_excel.py --perfil cabeza` | el mismo | guardia |
+
+`src/evaluacion/descripcion.py` lee el joblib del GMM y la tabla de ruteo y escribe la
+línea "Modelo: …" en el log y en cada HTML. **Hallazgo:** el monitor de `data2TesisV2`
+se creía "por grupos" pero su tabla de ruteo es toda `global`. Los monitores Excel
+comparan Outocal `_CAL` / modelo / modelo+Kalman / lab con casillas para mostrar u
+ocultar cada serie. Los resultados de un par (centrado vs Excel) difieren **solo** por
+la ventana de promedio; los dos llevan Kalman. Los reportes se regeneran en cada ciclo
+(20 min); solo un cambio de código exige reiniciar.
+
+### 24.3 Barrido de desfase de la ventana (2026-10-28)
+
+Ventanas de 12 h `[t+s, t+s+12h)`, s = −14 … +4 h, métricas sin sesgo. El óptimo está
+**entre** la centrada y la de guardia, s = −3/−4 h (`[t−4h, t+8h)`), para el modelo y
+para el Outocal crudo. Centrada (−6) y guardia (−1) quedan a ≤ 0.02 de MAE del óptimo;
+la de cierre (−12) es claramente peor. **No justifica cambiar los monitores.** Matiza
+la nota "la centrada gana" de §12: aquella solo se comparó contra la de cierre.
+
+### 24.4 Experimento de mejora (2026-10-29): ideas 2, 3 y 6
+
+Juez: guardia contra compósito y contra Outocal `_CAL`. Train 2025-12-16 → 2026-05-31
+(313 guardias); test + producción 258 guardias; bootstrap pareado. Scripts en el
+scratchpad de la sesión (no versionados).
+
+| ley | resultado |
+|---|---|
+| Mo | `log(pMo)` entrenado **contra el compósito**: MAE 0.177 vs Outocal 0.193 vs actual 0.204 (gana en 91 % de los bootstrap). Últimos 31 d: 0.130-0.136 vs actual 0.152 vs **Outocal 0.106** (el Outocal sigue ganando el último mes) |
+| Fe | Kalman **sin turno** / adaptativo: 0.860 → 0.822 (test+prod), 0.818 → 0.803 (prod). Pequeño pero consistente |
+| Cu | ninguna variante mejora (prod 0.868): techo de §19.12 |
+| otros | PCA semi-supervisado (~18k lecturas sin etiqueta), GBM monotónico, GPR: no aportan |
+
+Se compararon ~40 variantes sobre el mismo test → riesgo de **maldición del ganador**.
+Por eso las dos ganadoras no se adoptaron: van a prueba en ciego.
+
+### 24.5 Prueba en ciego (desde el compósito del 28-oct 19:30)
+
+En `AlimConc/scripts/en_linea_excel.py`, perfil concentrado, serie verde punteada
+"Prueba": `fe_prue` = Kalman sin turno (q por MAE en train, desde la época 2025-12-16);
+`mo_prue` = exp(RidgeCV) sobre `log(pMo)` entrenado en las guardias de train desde la
+época, sin Kalman; `cu_prue` = `cu_kal` (sin cambio). Bloque "Prueba en ciego" en el
+HTML: solo compósitos posteriores a `PRUEBA_DESDE` (2026-10-28 19:30), que el
+experimento no vio. Criterio: decidir con 30-60 guardias (2-4 semanas).
+
+Primer veredicto (28-oct B; error = |lab − X|):
+
+| ley | lab | Outocal | modelo + Kalman | prueba |
+|---|---|---|---|---|
+| Cu | 27.37 | 25.23 (2.14) | **25.76 (1.61)** | = Kalman |
+| Fe | 28.28 | 27.97 (0.31) | 28.82 (0.54) | **28.58 (0.30)** |
+| Mo | 1.68 | 1.12 (0.56) | **1.32 (0.36)** | 1.28 (0.40) |
+
+Un solo compósito: no concluye nada.
+
+### 24.6 Métricas de los monitores Excel al 2026-10-29 (31 días, guardias comunes)
+
+MAE contra el compósito, ventana de guardia:
+
+| | n | Outocal | modelo | modelo + Kalman | prueba |
+|---|---|---|---|---|---|
+| Conc. Cu (ambas carpetas) | 54 | 0.928 | 0.976 | **0.713** | 0.713 |
+| Conc. Fe (ambas) | 54 | 1.021 | 1.142 | 0.734 | **0.714** |
+| Conc. Mo `data2TesisV2` (global) | 54 | **0.111** | 0.185 | 0.156 | — |
+| Conc. Mo `AlimConc` (solo Mo k=4) | 54 | **0.111** | 0.164 | 0.146 | 0.136 |
+| Cabeza Cu | 30 | **0.033** | 0.039 | 0.034 | — |
+| Cabeza Fe | 30 | 0.181 | 0.189 | **0.166** | — |
+| Cabeza Mo | 30 | **0.0033** | 0.0041 | 0.0034 | — |
+
+**Lectura:** con Kalman el modelo le gana al Outocal en Cu y Fe del concentrado (−23 %
+y −28 % de MAE) y en Fe de cabeza; **el Outocal gana el Mo** del concentrado el último
+mes y empata Cu/Mo de cabeza. Sin Kalman el modelo pierde en todo: el Kalman es
+indispensable. `AlimConc` (solo Mo k=4) mejora el Mo del concentrado sobre el global
+(0.156 → 0.146).
+
+### 24.7 Incidentes de cambio de mineral y de muestreo (registro)
+
+| fecha | evento | efecto en la estimación |
+|---|---|---|
+| 22-24 oct | parada de planta | — |
+| **25-oct 07:30** | entra mineral con más Zn y Mo (cabeza Zn/Cu 0.010 → 0.018; `lr_zn_cu` conc. −5.28 → −5.10) | **Cu −2.21** (22.86 vs 25.07): la relación "más Zn ⇒ menos Cu" de train se rompe (§22). Cabeza Mo subestimado (0.0237 vs 0.029) |
+| 26-oct 07:30 | lab de Fe conc. cae puntual a 26.00 (vuelve a 28.35 a las 19:30) | Fe **+2.73**: dato de lab atípico, no del modelo; cabeza Cu −0.145 |
+| 27-oct 02:25-15:20 | **atoro del courier de cobre** (confirmado por el usuario): couriers congelados | compósitos del 27-oct sin estimación o con ventana parcial: no evaluarlos como error del modelo |
+| 28-oct 22 h | caída de tonelaje de ambos molinos (~314 t/h, parada corta) | — |
+| **28-oct 19:30** | Cu y Mo del lab altos (27.37 / 1.68) | todos subestiman: Cu −1.6 (Kalman) a −2.1 (Outocal); Mo 1.12-1.32 vs 1.68 |
+| 28-oct 23:44 → 29-oct 06:24 | molinos 1 y 2 sobre ~1490 t/h → **lavado de L2** (24.8) | Excel de cabeza 28-oct B sin estimación (< 10 lecturas en la guardia) |
+| **29-oct A (pendiente de lab)** | salto de mineral: Mo estimado conc. ~2.2 (lab previo 1.68), Cu ~23.0; cabeza Mo 0.026 → 0.036 | Outocal y modelo coinciden (Cu 23.0, Mo 2.17-2.24) → viene del mineral; el Cu ~23 se trata como **alerta** hasta el compósito (lección de §22) |
+
+**Patrón:** los cambios de mineral se ven en la cabeza (Zn/Cu, Mo) y en los log-cocientes
+del concentrado **antes** del compósito; el Kalman llega 12-24 h tarde. Sigue pendiente
+el aviso "mineral fuera de rango" (features fuera del soporte de train) de §22.
+
+### 24.8 Cabeza: lavado de las líneas de muestreo por alto tonelaje
+
+Dicho por el usuario (2026-10-29): la cabeza tiene dos líneas de muestreo (rebose de
+hidrociclones **L1 y L2**). Por seguridad, para que no se atoren las líneas ni el
+courier, una lógica del DCS **cierra las válvulas y lava las líneas con agua** cuando
+la alimentación supera ~1450 t/h (`ALIM_TOTAL_PB001/002_COM`). El compósito de cabeza
+**no** sale del courier: lo toma otro cortador (cortador principal después de los
+hidrociclones, cerca del PSI de molinos) y **sigue muestreando** durante el lavado.
+
+Medido:
+- Durante el lavado el courier **sigue midiendo y lee agua**, con firma inequívoca:
+  n1fe ≈ 330-540 (pulpa ~7,400), n2cu ≈ 1,340-1,430 (~2,200), n6sc ≈ 2,000-2,040
+  (~1,150); además filas todo-cero. En L2, ~20 % de las lecturas históricas
+  (2,364 / 11,874) son agua o cero.
+- El filtro de `scripts/cabeza_intensidades.py::lecturas` (5 MAD en log-cocientes) ya
+  bota el agua pura; sobreviven 58 lecturas con n1fe 1,000-3,000 (posibles transiciones).
+- Tags en PI: los `_COM` **no existen**; están archivados como
+  `_293200_Alim_Total_PB01_ABB` / `_PB02_ABB` (t/h, instrumenttag
+  `Carga_Circulante:ALIM_TOTAL_PB00x`). Cruce 01-sep → 29-oct (interpolado 2 min):
+
+  | línea | molino | regla | acierto | agua detectada | pulpa bien |
+  |---|---|---|---|---|---|
+  | **L2** | **2 (PB02)** | máx 20 min > 1475 | **87 %** | 77 % | 92 % |
+  | L2 | 1 (PB01) | máx 60 min > 1450 | 64 % | 18 % | 91 % |
+  | **L1** | **1 (PB01)** | máx 20 min > 1450 | 85 % | **39 %** | 98 % |
+
+  Cada línea sigue a **su** molino. L1 tiene además lavados por otra causa (61 % de su
+  agua no la explica el tonelaje): preguntar en planta.
+- ¿Sesga la comparación que el compósito vea horas que el courier no? En 117 guardias
+  de cabeza con lab, |lab − Kalman| **no depende** del número de lecturas válidas
+  (Spearman Cu r = 0.01, Fe −0.05, Mo −0.11; p > 0.25). Hoy no hace falta descartar
+  guardias por cobertura.
+
+**Pendiente opcional:** columna informativa de cobertura (horas de la guardia con el
+molino 2 sobre el umbral) en el monitor de cabeza; regla explícita de agua
+(`n6sc` alto + `n1fe` bajo) en vez de depender del MAD.
+
+### 24.9 Conclusiones para traspasar a `tesis_ucspv2`
+
+Ver `docs/traspaso_tesis_2026-10-29.md`.

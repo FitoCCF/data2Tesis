@@ -40,6 +40,7 @@ from src.pipeline.config import (ESTIMADO, LIMPIO_COMPOSITO, DATA_FINAL, RAW_COU
                                  MIN_BLOQUES_VENTANA, BLOQUE_RESAMPLE)
 from src.evaluacion.evaluar import (LEYES_COMPOSITO, mascara_lecturas, alinear_composito,
                                     kalman_serie, elegir_q, periodo_de)
+from src.evaluacion.descripcion import modelo_concentrado
 
 RAIZ = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 ETAPAS = ["01a_limpieza_fuentes", "01b_unificacion", "01c_limpieza", "02_features",
@@ -157,6 +158,7 @@ def _main():
     ap.add_argument("--cada", type=float, default=0, help="minutos entre ciclos (0 = un solo ciclo)")
     ap.add_argument("--sin-extraer", action="store_true", help="no consulta el PI (modo desarrollo)")
     args = ap.parse_args()
+    print(modelo_concentrado())
     monitor = MonitorEnLinea(extraer=not args.sin_extraer)
     while True:
         try:
